@@ -10,6 +10,8 @@ import {
   DEFAULT_LOCATION,
   DEFAULT_VIEW_STATE,
   I3S_SCENE_LAYER_URL,
+  TILE_SYNC_HEARTBEAT_MS,
+  TILE_SYNC_WARMUP_DELAYS_MS,
 } from './constants'
 import { normalizeFetchRadius } from './helpers'
 
@@ -313,6 +315,7 @@ export function usePlannerDataFlow({
 
   useEffect(() => {
     let cancelled = false
+    const warmupTimerIds = []
 
     async function initializeTileset() {
       try {
@@ -336,7 +339,14 @@ export function usePlannerDataFlow({
           },
         })
         setStatus('Loading ArcGIS 3D buildings...')
-        queueTileSync()
+        for (const delayMs of TILE_SYNC_WARMUP_DELAYS_MS) {
+          const timerId = window.setTimeout(() => {
+            if (!cancelled) {
+              queueTileSync()
+            }
+          }, delayMs)
+          warmupTimerIds.push(timerId)
+        }
       } catch (error) {
         if (cancelled) {
           return
@@ -350,6 +360,9 @@ export function usePlannerDataFlow({
 
     return () => {
       cancelled = true
+      for (const timerId of warmupTimerIds) {
+        clearTimeout(timerId)
+      }
       tilesetRef.current?.destroy?.()
       tilesetRef.current = null
     }
@@ -358,7 +371,7 @@ export function usePlannerDataFlow({
   useEffect(() => {
     const interval = setInterval(() => {
       queueTileSync()
-    }, 4500)
+    }, TILE_SYNC_HEARTBEAT_MS)
     return () => clearInterval(interval)
   }, [queueTileSync])
 

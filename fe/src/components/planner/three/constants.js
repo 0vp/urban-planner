@@ -40,3 +40,5 @@ export const TILE_CACHE_LIMIT = 320
 export const BASEMAP_CACHE_LIMIT = 320
 export const BASEMAP_TILE_RADIUS = 4
 export const TILE_SYNC_DEBOUNCE_MS = 120
+export const TILE_SYNC_HEARTBEAT_MS = 1200
+export const TILE_SYNC_WARMUP_DELAYS_MS = [0, 120, 320]

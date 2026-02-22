@@ -119,7 +119,7 @@ def _query_overpass_payload(query: str) -> dict:
 
 
 def _query_overpass_roads(lon: float, lat: float, radius_meters: int) -> list[dict]:
-    effective_radius = max(300, min(radius_meters, 600))
+    effective_radius = max(300, min(radius_meters, 10000))
     query = (
         "[out:json][timeout:10];"
         f"way(around:{effective_radius},{lat},{lon})"

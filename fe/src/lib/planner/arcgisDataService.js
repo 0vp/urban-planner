@@ -29,7 +29,7 @@ const REGION_BY_COUNTRY = {
 }
 
 const MAX_BUILDINGS = 6000
-const MAX_ROADS = 1800
+const ROADS_PAGE_SIZE = 1800
 const MAX_RIVERS = 600
 const MAX_PARKS = 800
 const DEFAULT_CITY_RADIUS_METERS = 1200
@@ -246,6 +246,91 @@ function estimateHeightMeters(attributes = {}) {
   return 10
 }
 
+function appendUniqueFeatures(target, features, seenObjectIds) {
+  for (const feature of features) {
+    const objectId = Number(feature?.attributes?.OBJECTID)
+    if (Number.isFinite(objectId)) {
+      if (seenObjectIds.has(objectId)) {
+        continue
+      }
+      seenObjectIds.add(objectId)
+    }
+    target.push(feature)
+  }
+}
+
+async function paginateRegionalFeatures({
+  region,
+  bounds,
+  serviceSuffix,
+  where,
+  outFields,
+  limit,
+  orderByFields,
+  geometryDetailParams,
+  signal,
+  initialFeatures,
+  initialExceededTransferLimit,
+}) {
+  if (!initialExceededTransferLimit) {
+    return initialFeatures
+  }
+
+  const allFeatures = []
+  const seenObjectIds = new Set()
+  appendUniqueFeatures(allFeatures, initialFeatures, seenObjectIds)
+
+  let offset = initialFeatures.length
+  let exceededTransferLimit = initialExceededTransferLimit
+
+  while (exceededTransferLimit && !signal?.aborted) {
+    const pageController = new AbortController()
+    const detachParentAbort = linkAbortSignal(signal, pageController)
+
+    try {
+      const pageParams = new URLSearchParams({
+        f: 'json',
+        where,
+        outFields,
+        returnGeometry: 'true',
+        geometry: JSON.stringify({ ...bounds, spatialReference: { wkid: 4326 } }),
+        geometryType: 'esriGeometryEnvelope',
+        spatialRel: 'esriSpatialRelIntersects',
+        inSR: '4326',
+        outSR: '4326',
+        resultRecordCount: String(limit),
+        resultOffset: String(offset),
+        ...(orderByFields ? { orderByFields } : {}),
+        ...geometryDetailParams,
+      })
+
+      const page = await fetchJsonWithTimeout(
+        `${getServiceUrl(region, serviceSuffix)}?${pageParams.toString()}`,
+        {
+          signal: pageController.signal,
+          timeoutMs: FEATURE_QUERY_TIMEOUT_MS,
+          errorMessage: `${serviceSuffix} query failed`,
+        },
+      )
+
+      const pageFeatures = Array.isArray(page?.features) ? page.features : []
+      if (!pageFeatures.length) {
+        break
+      }
+
+      appendUniqueFeatures(allFeatures, pageFeatures, seenObjectIds)
+      offset += pageFeatures.length
+      exceededTransferLimit = Boolean(page?.exceededTransferLimit)
+    } catch {
+      break
+    } finally {
+      detachParentAbort()
+    }
+  }
+
+  return allFeatures
+}
+
 async function queryRegionalFeatures({
   center,
   radiusMeters,
@@ -255,6 +340,8 @@ async function queryRegionalFeatures({
   outFields = '*',
   limit = 2000,
   signal,
+  paginate = false,
+  orderByFields,
 }) {
   const bounds = getBoundsFromCenter(center, radiusMeters)
   const regions = getRegionSearchOrder(countryCode)
@@ -275,6 +362,7 @@ async function queryRegionalFeatures({
       inSR: '4326',
       outSR: '4326',
       resultRecordCount: String(limit),
+      ...(paginate && orderByFields ? { orderByFields } : {}),
       ...geometryDetailParams,
     })
 
@@ -285,11 +373,15 @@ async function queryRegionalFeatures({
     })
       .then((data) => ({
         index,
+        region,
         features: Array.isArray(data?.features) ? data.features : [],
+        exceededTransferLimit: Boolean(data?.exceededTransferLimit),
       }))
       .catch(() => ({
         index,
+        region,
         features: [],
+        exceededTransferLimit: false,
       }))
       .finally(() => {
         detachParentAbort()
@@ -318,11 +410,47 @@ async function queryRegionalFeatures({
       }
     })
 
-    return winner.features
+    if (!paginate || !winner.region) {
+      return winner.features
+    }
+
+    return paginateRegionalFeatures({
+      region: winner.region,
+      bounds,
+      serviceSuffix,
+      where,
+      outFields,
+      limit,
+      orderByFields,
+      geometryDetailParams,
+      signal,
+      initialFeatures: winner.features,
+      initialExceededTransferLimit: winner.exceededTransferLimit,
+    })
   } catch {
     const settled = await Promise.all(requests.map(({ promise }) => promise))
     const firstNonEmpty = settled.find((result) => result.features.length > 0)
-    return firstNonEmpty ? firstNonEmpty.features : []
+    if (!firstNonEmpty) {
+      return []
+    }
+
+    if (!paginate || !firstNonEmpty.region) {
+      return firstNonEmpty.features
+    }
+
+    return paginateRegionalFeatures({
+      region: firstNonEmpty.region,
+      bounds,
+      serviceSuffix,
+      where,
+      outFields,
+      limit,
+      orderByFields,
+      geometryDetailParams,
+      signal,
+      initialFeatures: firstNonEmpty.features,
+      initialExceededTransferLimit: firstNonEmpty.exceededTransferLimit,
+    })
   }
 }
 
@@ -368,8 +496,10 @@ export async function fetchRoads(center, countryCode, radiusMeters = 1200, optio
     serviceSuffix: 'Highways',
     where: "highway IN ('motorway','trunk','primary','secondary','tertiary','residential','service')",
     outFields: 'OBJECTID,name,highway,lanes,width,maxspeed',
-    limit: MAX_ROADS,
+    limit: ROADS_PAGE_SIZE,
     signal: options.signal,
+    paginate: true,
+    orderByFields: 'OBJECTID ASC',
   })
 
   if (!rows.length) {

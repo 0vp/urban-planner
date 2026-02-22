@@ -115,6 +115,10 @@ export function usePlannerScene({
     highlightGroupRef.current = highlightGroup
 
     placeCameraFromView(DEFAULT_VIEW_STATE, [0, 0, 0])
+    queueTileSync()
+    const startupSyncRaf = requestAnimationFrame(() => {
+      queueTileSync()
+    })
 
     const onResize = () => {
       const width = Math.max(1, mount.clientWidth)
@@ -147,6 +151,7 @@ export function usePlannerScene({
     animate()
 
     return () => {
+      cancelAnimationFrame(startupSyncRaf)
       cancelAnimationFrame(animationRef.current)
       controls.removeEventListener('change', onControlsChanged)
       controls.removeEventListener('end', onControlsEnded)
