@@ -1318,6 +1318,28 @@ export function ThreePlannerShell() {
     const keyA = record.vertexToBuildingKey[face.a]
     const keyB = record.vertexToBuildingKey[face.b]
     const keyC = record.vertexToBuildingKey[face.c]
+
+    const candidates = [...new Set([keyA, keyB, keyC].filter(Boolean))]
+    let bestKey = null
+    let bestScore = -1
+    for (const candidate of candidates) {
+      const triangleCount = record.buildingToTriangles?.get(candidate)?.length || 0
+      if (!triangleCount) {
+        continue
+      }
+      const parsed = parseBuildingKey(candidate)
+      const hasFeatureId = Number.isFinite(parsed.featureId) && parsed.featureId >= 0
+      const score = (hasFeatureId ? 1_000_000 : 0) + triangleCount
+      if (score > bestScore) {
+        bestScore = score
+        bestKey = candidate
+      }
+    }
+
+    if (bestKey) {
+      return { key: bestKey, record }
+    }
+
     if (keyA === keyB || keyA === keyC) return { key: keyA, record }
     if (keyB === keyC) return { key: keyB, record }
     return { key: keyA, record }
@@ -1336,10 +1358,6 @@ export function ThreePlannerShell() {
       }
 
       const parsed = parseBuildingKey(hit.key)
-      if (!Number.isFinite(parsed.featureId) || parsed.featureId < 0) {
-        continue
-      }
-
       const triangles = hit.record?.buildingToTriangles?.get(hit.key)
       if (!triangles?.length) {
         continue
@@ -1412,8 +1430,14 @@ export function ThreePlannerShell() {
         setSelectedFeatureId(`i3s_${hit.key}`)
         setSelectedSourceType('i3s')
         setSelectedBuildingAttrs(null)
-        setStatus(`Selected I3S building (ID: ${parsed.featureId}). Loading attributes...`)
         updateHighlightMesh(hit.key)
+
+        if (!Number.isFinite(parsed.featureId) || parsed.featureId < 0) {
+          setStatus('Selected I3S building (attributes unavailable for this geometry).')
+          return
+        }
+
+        setStatus(`Selected I3S building (ID: ${parsed.featureId}). Loading attributes...`)
 
         loadFeatureAttributes(hit.record.tile, parsed.featureId)
           .then((attrs) => {
