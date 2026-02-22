@@ -2,11 +2,11 @@ import { useCallback, useRef } from 'react'
 import { parseBuildingKey } from '../../../lib/planner/i3sGeometryUtils'
 import { I3SViewportAdapter } from '../../../lib/planner/i3sViewportAdapter'
 import {
+  KEEP_LOADED_I3S_TILES,
   TILE_CACHE_LIMIT,
   TILE_SELECTION_OVERSCAN,
   TILE_SELECTION_ZOOM_BIAS,
   TILE_SYNC_DEBOUNCE_MS,
-  TILE_VISIBILITY_GRACE_TICKS,
 } from './constants'
 import { disposeObject } from './helpers'
 
@@ -100,16 +100,11 @@ export function usePlannerTileSync({
       for (const [tileId, record] of records.entries()) {
         if (selectedIds.has(tileId)) {
           record.lastWanted = seenTick
-          record.mesh.visible = true
-          continue
         }
-
-        const graceStartTick = record.lastWanted ?? record.lastSeen ?? seenTick
-        const isWithinGrace = seenTick - graceStartTick <= TILE_VISIBILITY_GRACE_TICKS
-        record.mesh.visible = isWithinGrace
+        record.mesh.visible = true
       }
 
-      if (records.size > TILE_CACHE_LIMIT) {
+      if (!KEEP_LOADED_I3S_TILES && records.size > TILE_CACHE_LIMIT) {
         const selectedTileId = selectedBuildingKeyRef.current
           ? parseBuildingKey(selectedBuildingKeyRef.current).tileId
           : null

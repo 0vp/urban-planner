@@ -37,6 +37,7 @@ export const MIN_FETCH_RADIUS_METERS = 300
 export const MAX_FETCH_RADIUS_METERS = 10000
 
 export const TILE_CACHE_LIMIT = 320
+export const KEEP_LOADED_I3S_TILES = true
 export const BASEMAP_CACHE_LIMIT = 320
 export const BASEMAP_TILE_RADIUS = 4
 export const TILE_VISIBILITY_GRACE_TICKS = 3

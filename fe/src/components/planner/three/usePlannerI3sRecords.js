@@ -214,6 +214,7 @@ export function usePlannerI3sRecords({
     const mesh = new THREE.Mesh(geometry, material)
     mesh.castShadow = false
     mesh.receiveShadow = false
+    mesh.frustumCulled = false
     mesh.userData = { tileId: tile.id }
 
     scheduleBoundsTreeBuild(geometry)
