@@ -12,7 +12,7 @@ const I3S_SCENE_LAYER_URL =
 const WORLD_MAP_TILE_URL =
   'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
 const WORLD_ROADS_TILE_URL =
-  'https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer/tile/{z}/{y}/{x}.pbf'
+  'https://basemaps.arcgis.com/arcgis/rest/services/OpenStreetMap_v2/VectorTileServer/tile/{z}/{y}/{x}.pbf'
 const DEFAULT_VIEW_STATE = {
   longitude: -73.5673,
   latitude: 45.5017,
@@ -43,19 +43,61 @@ function isWorldRoadFeature(feature) {
 
   const properties = feature?.properties || {}
   const layerName = String(
-    properties.layerName || properties.layer || properties.vt_layer || properties._layer || '',
+    properties.layerName || properties.layer || properties.vt_layer || properties._layer || properties.sourceLayer || '',
   ).toLowerCase()
-  const roadClass = String(properties.class || properties.kind || properties.type || '').toLowerCase()
+  const roadClass = String(
+    properties.class || properties.kind || properties.type || properties.fclass || properties._class || '',
+  ).toLowerCase()
+  const roadName = String(properties._name_local || properties._name_global || properties.name || '').toLowerCase()
+
+  const nonRoadHints = ['water', 'river', 'stream', 'canal', 'ferry', 'rail', 'railroad', 'boundary', 'admin', 'coast']
+  if (nonRoadHints.some((hint) => layerName.includes(hint) || roadClass.includes(hint))) {
+    return false
+  }
 
   return (
     layerName.includes('road') ||
     layerName.includes('highway') ||
     layerName.includes('transport') ||
     layerName.includes('street') ||
+    layerName.includes('trail') ||
+    layerName.includes('path') ||
+    layerName.includes('lane') ||
+    layerName.includes('route') ||
     layerName.includes('bridge') ||
     layerName.includes('tunnel') ||
     layerName.includes('traffic') ||
-    ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'service', 'road', 'street', 'unclassified', 'living_street', 'track', 'path', 'pedestrian', 'footway', 'cycleway', 'steps'].includes(roadClass)
+    layerName.includes('drive') ||
+    layerName.includes('boulevard') ||
+    layerName.includes('avenue') ||
+    [
+      'motorway',
+      'motorway_link',
+      'trunk',
+      'trunk_link',
+      'primary',
+      'primary_link',
+      'secondary',
+      'secondary_link',
+      'tertiary',
+      'tertiary_link',
+      'residential',
+      'service',
+      'road',
+      'street',
+      'unclassified',
+      'living_street',
+      'track',
+      'path',
+      'trail',
+      'pedestrian',
+      'footway',
+      'cycleway',
+      'steps',
+      'minor',
+      'local',
+    ].includes(roadClass) ||
+    (!!roadName && !nonRoadHints.some((hint) => roadName.includes(hint)))
   )
 }
 
@@ -372,9 +414,14 @@ export function ThreePlannerShell() {
         data: WORLD_ROADS_TILE_URL,
         minZoom: 0,
         maxZoom: 20,
+        zoomOffset: -2,
+        binary: false,
         pickable: false,
         filled: false,
         stroked: true,
+        parameters: {
+          depthTest: true,
+        },
         loadOptions: {
           mvt: {
             coordinates: 'wgs84',
@@ -390,9 +437,14 @@ export function ThreePlannerShell() {
         data: WORLD_ROADS_TILE_URL,
         minZoom: 0,
         maxZoom: 20,
+        zoomOffset: -2,
+        binary: false,
         pickable: false,
         filled: false,
         stroked: true,
+        parameters: {
+          depthTest: true,
+        },
         loadOptions: {
           mvt: {
             coordinates: 'wgs84',
