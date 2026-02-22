@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import DeckGL from '@deck.gl/react'
 import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
 import { MVTLayer, Tile3DLayer, TileLayer } from '@deck.gl/geo-layers'
-import { I3SLoader } from '@loaders.gl/i3s'
+import { I3SLoader, loadFeatureAttributes } from '@loaders.gl/i3s'
 import { fetchCityData } from '../../lib/planner/arcgisDataService'
 import { fetchPlannerMap, savePlannerMap } from '../../lib/planner/api'
+import {
+  applyModificationsToTile,
+  computeMoveDelta,
+  pickingIndexToFeatureId,
+} from '../../lib/planner/i3sGeometryUtils'
 
 const DEFAULT_LOCATION = 'Montreal, Quebec, Canada'
 const I3S_SCENE_LAYER_URL =
@@ -192,6 +197,17 @@ export function ThreePlannerShell() {
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [i3sReady, setI3sReady] = useState(false)
   const [i3sFailed, setI3sFailed] = useState(false)
+  const [buildingMods, setBuildingMods] = useState(new Map())
+  const [highlightedI3sIndex, setHighlightedI3sIndex] = useState(-1)
+  const [selectedI3sPickIndex, setSelectedI3sPickIndex] = useState(-1)
+  const [selectedI3sTile, setSelectedI3sTile] = useState(null)
+  const [selectedBuildingAttrs, setSelectedBuildingAttrs] = useState(null)
+  const [moveMode, setMoveMode] = useState(false)
+  const [moveSrcCoord, setMoveSrcCoord] = useState(null)
+  const [pickCoord, setPickCoord] = useState(null)
+  const [i3sModVersion, setI3sModVersion] = useState(0)
+  const buildingModsRef = useRef(buildingMods)
+  buildingModsRef.current = buildingMods
 
   const roadData = useMemo(() => buildFeatureCollection(features, 'road'), [features])
   const riverData = useMemo(() => buildFeatureCollection(features, 'river'), [features])
@@ -300,8 +316,19 @@ export function ThreePlannerShell() {
       setStatus('Select a feature first.')
       return
     }
+    if (selectedSourceType === 'i3s' && selectedI3sTile && highlightedI3sIndex >= 0) {
+      setMoveMode(true)
+      if (pickCoord) {
+        setMoveSrcCoord([pickCoord[0], pickCoord[1]])
+      } else {
+        const mbs = selectedI3sTile.header?.mbs
+        setMoveSrcCoord(mbs ? [mbs[0], mbs[1]] : null)
+      }
+      setStatus('Move mode: click a destination on the map.')
+      return
+    }
     setStatus(`Edit ${selectedFeatureId} is not implemented yet.`)
-  }, [selectedFeatureId])
+  }, [selectedFeatureId, selectedSourceType, selectedI3sTile, highlightedI3sIndex, pickCoord])
 
   const handleDelete = useCallback(() => {
     if (!selectedFeatureId) {
@@ -310,7 +337,25 @@ export function ThreePlannerShell() {
     }
 
     if (selectedSourceType === 'i3s') {
-      setStatus('I3S building meshes are read-only and cannot be deleted.')
+      const featureId = highlightedI3sIndex
+      if (featureId < 0) {
+        setStatus('No I3S building selected.')
+        return
+      }
+      setBuildingMods((prev) => {
+        const next = new Map(prev)
+        next.set(featureId, { action: 'delete' })
+        return next
+      })
+      setI3sModVersion((v) => v + 1)
+      setSelectedFeatureId(null)
+      setSelectedSourceType(null)
+      setHighlightedI3sIndex(-1)
+      setSelectedI3sPickIndex(-1)
+      setSelectedI3sTile(null)
+      setSelectedBuildingAttrs(null)
+      setIsDirty(true)
+      setStatus(`I3S building (ID: ${featureId}) deleted.`)
       return
     }
 
@@ -319,21 +364,69 @@ export function ThreePlannerShell() {
     setSelectedSourceType(null)
     setIsDirty(true)
     setStatus('Feature deleted.')
-  }, [selectedFeatureId, selectedSourceType])
+  }, [selectedFeatureId, selectedSourceType, highlightedI3sIndex, selectedI3sTile])
 
   const handleDeckClick = useCallback((info) => {
+    if (moveMode && info.coordinate) {
+      const [toLon, toLat] = info.coordinate
+      const [fromLon, fromLat] = moveSrcCoord || [toLon, toLat]
+      const featureId = highlightedI3sIndex
+
+      if (featureId >= 0) {
+        const delta = computeMoveDelta(fromLon, fromLat, toLon, toLat)
+        setBuildingMods((prev) => {
+          const next = new Map(prev)
+          const existing = next.get(featureId)
+          const prevDelta = existing?.delta || [0, 0, 0]
+          next.set(featureId, {
+            action: 'move',
+            delta: [prevDelta[0] + delta[0], prevDelta[1] + delta[1], prevDelta[2] + delta[2]],
+          })
+          return next
+        })
+        setI3sModVersion((v) => v + 1)
+        setIsDirty(true)
+        setStatus(`Building (ID: ${featureId}) moved.`)
+      }
+      setMoveMode(false)
+      setMoveSrcCoord(null)
+      return
+    }
+
     if (!info?.object) {
       setSelectedFeatureId(null)
       setSelectedSourceType(null)
+      setHighlightedI3sIndex(-1)
+      setSelectedI3sPickIndex(-1)
+      setSelectedI3sTile(null)
+      setSelectedBuildingAttrs(null)
       setStatus(SELECT_HINT)
       return
     }
 
-    if (info.layer?.id === 'i3s-buildings') {
-      const id = `i3s_${info.index ?? 'mesh'}`
-      setSelectedFeatureId(id)
+    if (info.layer?.id?.startsWith('i3s-buildings')) {
+      const pickingIndex = info.index
+      const realFeatureId = pickingIndexToFeatureId(info.object, pickingIndex)
+      setHighlightedI3sIndex(realFeatureId)
+      setSelectedI3sPickIndex(pickingIndex)
+      setSelectedI3sTile(info.object)
+      setSelectedFeatureId(`i3s_${realFeatureId}`)
       setSelectedSourceType('i3s')
-      setStatus('Selected I3S building mesh (read-only)')
+      setSelectedBuildingAttrs(null)
+      setPickCoord(info.coordinate || null)
+      setStatus(`Selected I3S building (ID: ${realFeatureId}). Loading attributes...`)
+      loadFeatureAttributes(info.object, realFeatureId)
+        .then((attrs) => {
+          if (attrs) {
+            setSelectedBuildingAttrs(attrs)
+            const name = attrs.name || 'unnamed'
+            const height = attrs.height || '?'
+            setStatus(`I3S: ${name} | Height: ${height}m | ID: ${realFeatureId}`)
+          } else {
+            setStatus(`Selected I3S building (ID: ${realFeatureId})`)
+          }
+        })
+        .catch(() => setStatus(`Selected I3S building (ID: ${realFeatureId})`))
       return
     }
 
@@ -344,6 +437,10 @@ export function ThreePlannerShell() {
     if (!sourceId) {
       setSelectedFeatureId(null)
       setSelectedSourceType(null)
+      setHighlightedI3sIndex(-1)
+      setSelectedI3sPickIndex(-1)
+      setSelectedI3sTile(null)
+      setSelectedBuildingAttrs(null)
       setStatus(SELECT_HINT)
       return
     }
@@ -351,7 +448,7 @@ export function ThreePlannerShell() {
     setSelectedFeatureId(sourceId)
     setSelectedSourceType('feature')
     setStatus(`Selected ${sourceType}: ${name}`)
-  }, [])
+  }, [moveMode, moveSrcCoord, highlightedI3sIndex, selectedI3sTile])
 
   const layers = useMemo(() => {
     const layerList = [
@@ -379,21 +476,22 @@ export function ThreePlannerShell() {
         },
       }),
       new Tile3DLayer({
-        id: 'i3s-buildings',
+        id: `i3s-buildings-${i3sModVersion}`,
         data: I3S_SCENE_LAYER_URL,
         loader: I3SLoader,
         pickable: true,
+        highlightedObjectIndex: selectedI3sPickIndex,
         loadOptions: {
           i3s: {
             decodeTextures: false,
           },
         },
-        onTileLoad: () => {
+        onTileLoad: (tile) => {
+          applyModificationsToTile(tile, buildingModsRef.current)
           setI3sReady((ready) => {
             if (ready) {
               return ready
             }
-
             setStatus('ArcGIS 3D buildings loaded.')
             return true
           })
@@ -484,7 +582,7 @@ export function ThreePlannerShell() {
     ]
 
     return layerList
-  }, [riverData, roadData, selectedFeatureId])
+  }, [riverData, roadData, selectedFeatureId, selectedI3sPickIndex, i3sModVersion])
 
   const handleSearchSubmit = (event) => {
     event.preventDefault()
@@ -575,12 +673,35 @@ export function ThreePlannerShell() {
           </button>
         </div>
 
+        {moveMode && (
+          <div className="rounded-md border border-amber-700 bg-amber-950/50 p-3 text-xs text-amber-300 leading-relaxed">
+            <p>Move mode active. Click a destination on the map or press Escape to cancel.</p>
+            <button
+              type="button"
+              onClick={() => { setMoveMode(false); setMoveSrcCoord(null); setStatus(SELECT_HINT) }}
+              className="mt-2 h-7 px-2 rounded bg-amber-800 hover:bg-amber-700 text-xs"
+            >
+              Cancel Move
+            </button>
+          </div>
+        )}
+
         <div className="space-y-1 text-sm text-zinc-300">
           <p>Features: {features.length}</p>
-          <p>Selected: {selectedFeatureId ? selectedFeatureId.slice(0, 14) : 'none'}</p>
+          <p>Selected: {selectedFeatureId ? String(selectedFeatureId).slice(0, 14) : 'none'}</p>
           <p>Status: {isDirty ? 'Unsaved changes' : 'Saved'}</p>
           <p>I3S: {i3sFailed ? 'failed' : i3sReady ? 'mesh loaded' : 'loading'}</p>
+          <p>I3S mods: {buildingMods.size}</p>
         </div>
+
+        {selectedBuildingAttrs && (
+          <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300 leading-relaxed space-y-1">
+            <p className="text-zinc-400 uppercase tracking-wide">Building attributes</p>
+            {Object.entries(selectedBuildingAttrs).map(([key, val]) =>
+              val ? <p key={key}><span className="text-zinc-500">{key}:</span> {val}</p> : null
+            )}
+          </div>
+        )}
 
         <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300 leading-relaxed">
           <p>{status}</p>
@@ -594,7 +715,7 @@ export function ThreePlannerShell() {
           controller
           onViewStateChange={({ viewState: nextViewState }) => setViewState(nextViewState)}
           onClick={handleDeckClick}
-          getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
+          getCursor={({ isHovering }) => (moveMode ? 'crosshair' : isHovering ? 'pointer' : 'grab')}
           style={{ position: 'absolute', inset: 0, backgroundColor: '#0a0a0a' }}
         />
       </div>
