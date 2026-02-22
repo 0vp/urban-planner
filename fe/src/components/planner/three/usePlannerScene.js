@@ -227,8 +227,7 @@ export function usePlannerScene({
         continue
       }
 
-      const isSelected = selectedFeatureId && feature.id === selectedFeatureId
-      const color = lineColorForFeature(feature.entityType, isSelected)
+      const color = lineColorForFeature(feature.entityType, false)
       const widthRaw = Number(feature?.attributes?.width)
       const width = Number.isFinite(widthRaw)
         ? clamp(widthRaw, 2, feature.entityType === 'river' ? 50 : 30)
@@ -271,5 +270,26 @@ export function usePlannerScene({
         featureGroup.add(mesh)
       }
     }
-  }, [enuFrameRef, featureGroupRef, features, radiusClipUniformRef, selectedFeatureId])
+  }, [enuFrameRef, featureGroupRef, features, radiusClipUniformRef])
+
+  useEffect(() => {
+    const featureGroup = featureGroupRef.current
+    if (!featureGroup) {
+      return
+    }
+
+    for (const child of featureGroup.children) {
+      const material = child.material
+      if (!material) {
+        continue
+      }
+
+      const sourceId = child.userData?.sourceId
+      const entityType = child.userData?.entityType
+      const isSelected = Boolean(selectedFeatureId && sourceId === selectedFeatureId)
+      const color = lineColorForFeature(entityType, isSelected)
+      material.color.setRGB(color[0] / 255, color[1] / 255, color[2] / 255)
+      material.opacity = color[3] / 255
+    }
+  }, [featureGroupRef, features, selectedFeatureId])
 }

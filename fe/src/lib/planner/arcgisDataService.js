@@ -638,6 +638,10 @@ function computePolygonCenter(ring) {
 export async function fetchCityData(locationQuery, options = {}) {
   const searchStartedAt = performance.now()
   const radiusMeters = normalizeRadiusMeters(options.radiusMeters)
+  const includeRoads = options.includeRoads !== false
+  const includeRivers = options.includeRivers !== false
+  const includeBuildings = options.includeBuildings !== false
+  const includeParks = options.includeParks !== false
   const geocodeStartedAt = performance.now()
   const geocodeResult = await geocodeLocation(locationQuery, {
     preferredCenter: options.preferredCenter,
@@ -647,10 +651,18 @@ export async function fetchCityData(locationQuery, options = {}) {
   const center = [geocodeResult.location.x, geocodeResult.location.y]
   const countryCode = geocodeResult.countryCode
 
-  const roadsPromise = fetchRoads(center, countryCode, radiusMeters, { signal: options.signal })
-  const riversPromise = fetchRivers(center, countryCode, radiusMeters, { signal: options.signal })
-  const buildingsPromise = fetchBuildings(center, countryCode, radiusMeters, { signal: options.signal })
-  const parksPromise = fetchParks(center, countryCode, radiusMeters, { signal: options.signal })
+  const roadsPromise = includeRoads
+    ? fetchRoads(center, countryCode, radiusMeters, { signal: options.signal })
+    : Promise.resolve([])
+  const riversPromise = includeRivers
+    ? fetchRivers(center, countryCode, radiusMeters, { signal: options.signal })
+    : Promise.resolve([])
+  const buildingsPromise = includeBuildings
+    ? fetchBuildings(center, countryCode, radiusMeters, { signal: options.signal })
+    : Promise.resolve([])
+  const parksPromise = includeParks
+    ? fetchParks(center, countryCode, radiusMeters, { signal: options.signal })
+    : Promise.resolve([])
 
   const [roadsFast, riversFast] = await Promise.allSettled([roadsPromise, riversPromise])
   const fastFeatures = [
@@ -660,13 +672,15 @@ export async function fetchCityData(locationQuery, options = {}) {
   const firstRenderableMs = performance.now() - searchStartedAt
 
   try {
-    options.onPartialResult?.({
-      location: geocodeResult.address,
-      center,
-      extent: geocodeResult.extent,
-      radiusMeters,
-      features: fastFeatures,
-    })
+    if (fastFeatures.length > 0) {
+      options.onPartialResult?.({
+        location: geocodeResult.address,
+        center,
+        extent: geocodeResult.extent,
+        radiusMeters,
+        features: fastFeatures,
+      })
+    }
   } catch {
   }
 
@@ -694,6 +708,7 @@ export async function fetchCityData(locationQuery, options = {}) {
     location: geocodeResult.address,
     center,
     extent: geocodeResult.extent,
+    countryCode,
     radiusMeters,
     features,
     timings,

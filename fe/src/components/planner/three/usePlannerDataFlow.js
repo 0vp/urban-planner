@@ -68,6 +68,22 @@ function mergeFeaturesWithSavedMap(liveFeatures, savedFeatures) {
   return merged
 }
 
+function isSameCenter(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) {
+    return false
+  }
+
+  const ax = Number(a[0])
+  const ay = Number(a[1])
+  const bx = Number(b[0])
+  const by = Number(b[1])
+  if (![ax, ay, bx, by].every(Number.isFinite)) {
+    return false
+  }
+
+  return Math.abs(ax - bx) < 1e-6 && Math.abs(ay - by) < 1e-6
+}
+
 export function usePlannerDataFlow({
   activeLocation,
   features,
@@ -105,34 +121,46 @@ export function usePlannerDataFlow({
   const searchRequestIdRef = useRef(0)
   const searchAbortRef = useRef(null)
 
-  const loadFeaturesIntoState = useCallback((loadedFeatures, center) => {
-    setI3sFailed(false)
-    setI3sReady(false)
+  const loadFeaturesIntoState = useCallback((loadedFeatures, center, options = {}) => {
+    const shouldResetScene = options.resetScene !== false
+
+    if (shouldResetScene) {
+      setI3sFailed(false)
+      setI3sReady(false)
+    }
 
     setFeatures(loadedFeatures)
-    setIsDirty(false)
-    setSelectedFeatureId(null)
-    setSelectedSourceType(null)
-    setSelectedBuildingKey(null)
-    setSelectedBuildingAttrs(null)
-    setMoveMode(false)
-    setMoveSrcCoord(null)
-    setBuildingMods(new Map())
-    clearTileRecords()
-    clearBasemapTiles()
-    updateHighlightMesh(null)
+    if (shouldResetScene) {
+      setIsDirty(false)
+      setSelectedFeatureId(null)
+      setSelectedSourceType(null)
+      setSelectedBuildingKey(null)
+      setSelectedBuildingAttrs(null)
+      setMoveMode(false)
+      setMoveSrcCoord(null)
+      setBuildingMods(new Map())
+      clearTileRecords()
+      clearBasemapTiles()
+      updateHighlightMesh(null)
+    }
 
     if (Array.isArray(center) && center.length >= 2) {
       const lon = Number(center[0])
       const lat = Number(center[1])
       if (Number.isFinite(lon) && Number.isFinite(lat)) {
-        enuFrameRef.current = buildEnuFrame(lon, lat, 0)
-        mapViewStateRef.current = {
-          ...DEFAULT_VIEW_STATE,
-          longitude: lon,
-          latitude: lat,
+        const currentFrame = enuFrameRef.current
+        const currentCenter = currentFrame ? [currentFrame.originLon, currentFrame.originLat] : null
+        const centerChanged = !isSameCenter([lon, lat], currentCenter)
+
+        if (shouldResetScene || centerChanged) {
+          enuFrameRef.current = buildEnuFrame(lon, lat, 0)
+          mapViewStateRef.current = {
+            ...DEFAULT_VIEW_STATE,
+            longitude: lon,
+            latitude: lat,
+          }
+          placeCameraFromView(mapViewStateRef.current, [0, 0, 0])
         }
-        placeCameraFromView(mapViewStateRef.current, [0, 0, 0])
       }
     }
     queueTileSync()
@@ -180,9 +208,13 @@ export function usePlannerDataFlow({
     setIsLoading(true)
     setStatus(`Searching ${trimmed} (${radiusMeters}m radius)...`)
 
+    let partialResultApplied = false
+
     try {
       const cityData = await fetchCityData(trimmed, {
         radiusMeters,
+        includeBuildings: false,
+        includeParks: false,
         preferredCenter: [mapViewStateRef.current.longitude, mapViewStateRef.current.latitude],
         signal: searchController.signal,
         onPartialResult: (partialData) => {
@@ -196,7 +228,8 @@ export function usePlannerDataFlow({
 
           setActiveLocation(partialData.location)
           setLocationInput(partialData.location)
-          loadFeaturesIntoState(partialData.features, partialData.center)
+          partialResultApplied = true
+          loadFeaturesIntoState(partialData.features, partialData.center, { resetScene: true })
           setIsLoading(false)
           setStatus(
             `Loaded ${partialData.features.length} roads/rivers for ${partialData.location}. Enriching...`,
@@ -240,7 +273,7 @@ export function usePlannerDataFlow({
         return
       }
 
-      loadFeaturesIntoState(mergedFeatures, cityData.center)
+      loadFeaturesIntoState(mergedFeatures, cityData.center, { resetScene: !partialResultApplied })
       const timingSummary = cityData?.timings
         ? ` (fast ${Math.round(cityData.timings.firstRenderableMs)}ms, full ${Math.round(cityData.timings.fullDataMs)}ms)`
         : ''

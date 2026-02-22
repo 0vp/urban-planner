@@ -1,7 +1,13 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { parseBuildingKey } from '../../../lib/planner/i3sGeometryUtils'
 import { I3SViewportAdapter } from '../../../lib/planner/i3sViewportAdapter'
-import { TILE_CACHE_LIMIT, TILE_SYNC_DEBOUNCE_MS } from './constants'
+import {
+  TILE_CACHE_LIMIT,
+  TILE_SELECTION_OVERSCAN,
+  TILE_SELECTION_ZOOM_BIAS,
+  TILE_SYNC_DEBOUNCE_MS,
+  TILE_VISIBILITY_GRACE_TICKS,
+} from './constants'
 import { disposeObject } from './helpers'
 
 export function usePlannerTileSync({
@@ -29,8 +35,11 @@ export function usePlannerTileSync({
   findVisibleBuildingKeyByFeatureId,
   updateHighlightMesh,
 }) {
+  const syncRequestedWhilePendingRef = useRef(false)
+
   const syncTilesWithView = useCallback(async () => {
     if (pendingSyncRef.current) {
+      syncRequestedWhilePendingRef.current = true
       return
     }
     const renderer = rendererRef.current
@@ -50,11 +59,11 @@ export function usePlannerTileSync({
 
       const viewport = new I3SViewportAdapter({
         id: 'main',
-        width: Math.max(1, renderer.domElement.clientWidth),
-        height: Math.max(1, renderer.domElement.clientHeight),
+        width: Math.max(1, Math.round(renderer.domElement.clientWidth * TILE_SELECTION_OVERSCAN)),
+        height: Math.max(1, Math.round(renderer.domElement.clientHeight * TILE_SELECTION_OVERSCAN)),
         longitude: view.longitude,
         latitude: view.latitude,
-        zoom: view.zoom,
+        zoom: Math.max(0, view.zoom - TILE_SELECTION_ZOOM_BIAS),
         pitch: view.pitch,
         bearing: view.bearing,
       })
@@ -75,6 +84,7 @@ export function usePlannerTileSync({
             continue
           }
           record.lastSeen = seenTick
+          record.lastWanted = seenTick
           record.mesh.visible = true
           records.set(tile.id, record)
           i3sGroup.add(record.mesh)
@@ -82,23 +92,38 @@ export function usePlannerTileSync({
           const record = records.get(tile.id)
           record.tile = tile
           record.lastSeen = seenTick
+          record.lastWanted = seenTick
           record.mesh.visible = true
         }
       }
 
       for (const [tileId, record] of records.entries()) {
-        record.mesh.visible = selectedIds.has(tileId)
+        if (selectedIds.has(tileId)) {
+          record.lastWanted = seenTick
+          record.mesh.visible = true
+          continue
+        }
+
+        const graceStartTick = record.lastWanted ?? record.lastSeen ?? seenTick
+        const isWithinGrace = seenTick - graceStartTick <= TILE_VISIBILITY_GRACE_TICKS
+        record.mesh.visible = isWithinGrace
       }
 
       if (records.size > TILE_CACHE_LIMIT) {
         const selectedTileId = selectedBuildingKeyRef.current
           ? parseBuildingKey(selectedBuildingKeyRef.current).tileId
           : null
-        const oldestByAge = [...records.entries()]
-          .sort((a, b) => a[1].lastSeen - b[1].lastSeen)
+        const evictionOrder = [...records.entries()]
+          .sort((a, b) => {
+            const visibleDelta = Number(a[1].mesh.visible) - Number(b[1].mesh.visible)
+            if (visibleDelta !== 0) {
+              return visibleDelta
+            }
+            return a[1].lastSeen - b[1].lastSeen
+          })
 
         let overflow = records.size - TILE_CACHE_LIMIT
-        for (const [tileId, record] of oldestByAge) {
+        for (const [tileId, record] of evictionOrder) {
           if (overflow <= 0) {
             break
           }
@@ -149,6 +174,12 @@ export function usePlannerTileSync({
       setStatus(error?.message || 'Failed to sync I3S tiles.')
     } finally {
       pendingSyncRef.current = false
+      if (syncRequestedWhilePendingRef.current) {
+        syncRequestedWhilePendingRef.current = false
+        requestAnimationFrame(() => {
+          syncTilesWithView()
+        })
+      }
     }
   }, [
     createTileRecord,
@@ -168,6 +199,7 @@ export function usePlannerTileSync({
     setSelectedSourceType,
     setStatus,
     syncTickRef,
+    syncRequestedWhilePendingRef,
     tileRecordsRef,
     tilesetRef,
     updateBasemapTiles,

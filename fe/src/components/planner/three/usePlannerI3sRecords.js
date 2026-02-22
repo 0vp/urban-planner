@@ -10,6 +10,41 @@ import {
 import { COLORS } from './constants'
 import { applyRadiusClipShader, disposeObject, normalizeColorAttribute } from './helpers'
 
+function normalizeIndexArray(rawIndices) {
+  if (!rawIndices?.length) {
+    return null
+  }
+
+  if (rawIndices instanceof Uint16Array || rawIndices instanceof Uint32Array) {
+    return rawIndices
+  }
+
+  if (ArrayBuffer.isView(rawIndices)) {
+    return Uint32Array.from(rawIndices)
+  }
+
+  return Uint32Array.from(rawIndices)
+}
+
+function scheduleBoundsTreeBuild(geometry) {
+  const build = () => {
+    try {
+      if (!geometry?.getAttribute?.('position')) {
+        return
+      }
+      geometry.computeBoundsTree?.({ maxLeafTris: 24 })
+    } catch {
+    }
+  }
+
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(build, { timeout: 150 })
+    return
+  }
+
+  setTimeout(build, 0)
+}
+
 export function usePlannerI3sRecords({
   i3sGroupRef,
   highlightGroupRef,
@@ -142,9 +177,9 @@ export function usePlannerI3sRecords({
     const positionAttribute = new THREE.BufferAttribute(new Float32Array(basePositions), 3)
     geometry.setAttribute('position', positionAttribute)
 
-    const rawIndices = content?.indices?.value || content?.indices
+    const rawIndices = normalizeIndexArray(content?.indices?.value || content?.indices)
     if (rawIndices?.length) {
-      geometry.setIndex(Array.from(rawIndices))
+      geometry.setIndex(new THREE.BufferAttribute(rawIndices, 1))
     }
 
     const rawNormals = content?.attributes?.normals?.value || content?.attributes?.normals
@@ -181,7 +216,7 @@ export function usePlannerI3sRecords({
     mesh.receiveShadow = false
     mesh.userData = { tileId: tile.id }
 
-    geometry.computeBoundsTree?.({ maxLeafTris: 24 })
+    scheduleBoundsTreeBuild(geometry)
 
     const featureIndex = buildTileFeatureIndex(
       tile.id,
