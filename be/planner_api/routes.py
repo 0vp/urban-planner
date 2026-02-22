@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import json
 import re
@@ -22,6 +23,8 @@ OVERPASS_URLS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 )
+OVERPASS_CONNECT_TIMEOUT_SECONDS = 4
+OVERPASS_READ_TIMEOUT_SECONDS = 10
 
 
 def _parse_number(value: str | None) -> float | None:
@@ -46,60 +49,84 @@ def _road_width_from_tags(tags: dict[str, str]) -> float:
     return 6.0
 
 
-def _query_overpass_roads(lon: float, lat: float, radius_meters: int) -> list[dict]:
-    effective_radius = max(300, min(radius_meters, 600))
-    query = (
-        "[out:json][timeout:16];"
-        f"way(around:{effective_radius},{lat},{lon})"
-        "[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$\"];"
-        "out geom qt;"
-    )
-    raw: str | None = None
-    for endpoint in OVERPASS_URLS:
-        if requests is not None:
-            try:
-                response = requests.post(
-                    endpoint,
-                    data=query,
-                    headers={
-                        "Content-Type": "text/plain; charset=utf-8",
-                        "User-Agent": "urban-planner/1.0",
-                    },
-                    timeout=20,
-                )
-                if response.status_code >= 400:
-                    continue
-                raw = response.text
-            except requests.RequestException:
-                continue
-        else:
-            req = url_request.Request(
+def _post_overpass(endpoint: str, query: str) -> str | None:
+    if requests is not None:
+        try:
+            response = requests.post(
                 endpoint,
-                data=query.encode("utf-8"),
+                data=query,
                 headers={
                     "Content-Type": "text/plain; charset=utf-8",
                     "User-Agent": "urban-planner/1.0",
                 },
-                method="POST",
+                timeout=(OVERPASS_CONNECT_TIMEOUT_SECONDS, OVERPASS_READ_TIMEOUT_SECONDS),
             )
+            if response.status_code >= 400:
+                return None
+            raw = response.text
+        except requests.RequestException:
+            return None
+    else:
+        req = url_request.Request(
+            endpoint,
+            data=query.encode("utf-8"),
+            headers={
+                "Content-Type": "text/plain; charset=utf-8",
+                "User-Agent": "urban-planner/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with url_request.urlopen(req, timeout=OVERPASS_READ_TIMEOUT_SECONDS) as response:
+                raw = response.read().decode("utf-8")
+        except (url_error.URLError, TimeoutError):
+            return None
+
+    if not raw or raw.lstrip().startswith("<"):
+        return None
+
+    return raw
+
+
+def _query_overpass_payload(query: str) -> dict:
+    max_workers = max(1, len(OVERPASS_URLS))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_endpoint = {
+            executor.submit(_post_overpass, endpoint, query): endpoint
+            for endpoint in OVERPASS_URLS
+        }
+
+        for future in as_completed(future_to_endpoint):
             try:
-                with url_request.urlopen(req, timeout=20) as response:
-                    raw = response.read().decode("utf-8")
-            except (url_error.URLError, TimeoutError):
+                raw = future.result()
+            except Exception:  # pragma: no cover - defensive fallback
+                continue
+            if raw is None:
                 continue
 
-        if not raw or raw.lstrip().startswith("<"):
-            raw = None
-            continue
-        break
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
 
-    if raw is None:
-        raise HTTPException(status_code=502, detail="Road fallback provider is unavailable")
+            if isinstance(payload, dict) and isinstance(payload.get("elements"), list):
+                for pending in future_to_endpoint:
+                    if pending is not future:
+                        pending.cancel()
+                return payload
 
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="Road fallback provider returned invalid data") from exc
+    raise HTTPException(status_code=502, detail="Road fallback provider is unavailable")
+
+
+def _query_overpass_roads(lon: float, lat: float, radius_meters: int) -> list[dict]:
+    effective_radius = max(300, min(radius_meters, 600))
+    query = (
+        "[out:json][timeout:10];"
+        f"way(around:{effective_radius},{lat},{lon})"
+        "[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$\"];"
+        "out geom qt;"
+    )
+    payload = _query_overpass_payload(query)
     elements = payload.get("elements") if isinstance(payload, dict) else None
     if not isinstance(elements, list):
         return []

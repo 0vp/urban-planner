@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { load } from '@loaders.gl/core'
 import { I3SLoader } from '@loaders.gl/i3s'
 import { Tileset3D } from '@loaders.gl/tiles'
@@ -12,6 +12,59 @@ import {
   I3S_SCENE_LAYER_URL,
 } from './constants'
 import { normalizeFetchRadius } from './helpers'
+
+function centerToDedupeKey(center) {
+  if (!Array.isArray(center) || center.length < 2) {
+    return null
+  }
+
+  const x = Number(center[0])
+  const y = Number(center[1])
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null
+  }
+
+  return `${Math.round(x * 10000)}:${Math.round(y * 10000)}`
+}
+
+function mergeFeaturesWithSavedMap(liveFeatures, savedFeatures) {
+  const merged = [...liveFeatures]
+  const seenIds = new Set()
+  const seenCenters = new Set()
+
+  for (const feature of liveFeatures) {
+    if (feature?.id != null) {
+      seenIds.add(String(feature.id))
+    }
+    const centerKey = centerToDedupeKey(feature?.center)
+    if (centerKey) {
+      seenCenters.add(centerKey)
+    }
+  }
+
+  for (const feature of savedFeatures) {
+    const featureId = feature?.id != null ? String(feature.id) : ''
+    if (featureId && seenIds.has(featureId)) {
+      continue
+    }
+
+    const centerKey = centerToDedupeKey(feature?.center)
+    if (centerKey && seenCenters.has(centerKey)) {
+      continue
+    }
+
+    merged.push(feature)
+
+    if (featureId) {
+      seenIds.add(featureId)
+    }
+    if (centerKey) {
+      seenCenters.add(centerKey)
+    }
+  }
+
+  return merged
+}
 
 export function usePlannerDataFlow({
   activeLocation,
@@ -47,6 +100,9 @@ export function usePlannerDataFlow({
   queueTileSync,
   applyModsToAllTiles,
 }) {
+  const searchRequestIdRef = useRef(0)
+  const searchAbortRef = useRef(null)
+
   const loadFeaturesIntoState = useCallback((loadedFeatures, center) => {
     setI3sFailed(false)
     setI3sReady(false)
@@ -107,6 +163,13 @@ export function usePlannerDataFlow({
     }
 
     const radiusMeters = normalizeFetchRadius(radiusInput)
+    const requestId = searchRequestIdRef.current + 1
+    searchRequestIdRef.current = requestId
+
+    searchAbortRef.current?.abort()
+    const searchController = new AbortController()
+    searchAbortRef.current = searchController
+
     renderRadiusMetersRef.current = radiusMeters
     radiusClipUniformRef.current.value = radiusMeters
     setActiveRadiusMeters(radiusMeters)
@@ -119,7 +182,30 @@ export function usePlannerDataFlow({
       const cityData = await fetchCityData(trimmed, {
         radiusMeters,
         preferredCenter: [mapViewStateRef.current.longitude, mapViewStateRef.current.latitude],
+        signal: searchController.signal,
+        onPartialResult: (partialData) => {
+          if (requestId !== searchRequestIdRef.current || searchController.signal.aborted) {
+            return
+          }
+
+          if (!Array.isArray(partialData?.features) || partialData.features.length === 0) {
+            return
+          }
+
+          setActiveLocation(partialData.location)
+          setLocationInput(partialData.location)
+          loadFeaturesIntoState(partialData.features, partialData.center)
+          setIsLoading(false)
+          setStatus(
+            `Loaded ${partialData.features.length} roads/rivers for ${partialData.location}. Enriching...`,
+          )
+        },
       })
+
+      if (requestId !== searchRequestIdRef.current || searchController.signal.aborted) {
+        return
+      }
+
       setActiveLocation(cityData.location)
       setLocationInput(cityData.location)
 
@@ -129,30 +215,48 @@ export function usePlannerDataFlow({
       let savedMapUnavailable = false
 
       try {
-        const savedData = await fetchPlannerMap(cityData.location)
+        const savedData = await fetchPlannerMap(cityData.location, {
+          signal: searchController.signal,
+          timeoutMs: 3500,
+        })
+
+        if (requestId !== searchRequestIdRef.current || searchController.signal.aborted) {
+          return
+        }
+
         const savedFeatures = Array.isArray(savedData.features) ? savedData.features : []
 
-        mergedFeatures = [...cityData.features, ...savedFeatures.filter(sf =>
-          !cityData.features.some(cf =>
-            cf.center && sf.center &&
-            Math.abs(cf.center[0] - sf.center[0]) < 0.0001 &&
-            Math.abs(cf.center[1] - sf.center[1]) < 0.0001
-          )
-        )]
-      } catch {
+        mergedFeatures = mergeFeaturesWithSavedMap(cityData.features, savedFeatures)
+      } catch (error) {
+        if (error?.name === 'AbortError' || searchController.signal.aborted) {
+          return
+        }
         savedMapUnavailable = true
       }
 
+      if (requestId !== searchRequestIdRef.current || searchController.signal.aborted) {
+        return
+      }
+
       loadFeaturesIntoState(mergedFeatures, cityData.center)
+      const timingSummary = cityData?.timings
+        ? ` (fast ${Math.round(cityData.timings.firstRenderableMs)}ms, full ${Math.round(cityData.timings.fullDataMs)}ms)`
+        : ''
       setStatus(
         savedMapUnavailable
-          ? `Loaded ${mergedFeatures.length} features for ${cityData.location} (saved-map sync unavailable).`
-          : `Loaded ${mergedFeatures.length} features for ${cityData.location}.`,
+          ? `Loaded ${mergedFeatures.length} features for ${cityData.location} (saved-map sync unavailable).${timingSummary}`
+          : `Loaded ${mergedFeatures.length} features for ${cityData.location}.${timingSummary}`,
       )
     } catch (error) {
+      if (error?.name === 'AbortError' || searchController.signal.aborted) {
+        return
+      }
       setStatus(error.message || 'Failed to search location.')
     } finally {
-      setIsLoading(false)
+      if (requestId === searchRequestIdRef.current) {
+        searchAbortRef.current = null
+        setIsLoading(false)
+      }
     }
   }, [
     loadFeaturesIntoState,
@@ -190,6 +294,13 @@ export function usePlannerDataFlow({
       setIsSaving(false)
     }
   }, [activeLocation, features, setIsDirty, setIsSaving, setStatus])
+
+  useEffect(() => {
+    return () => {
+      searchAbortRef.current?.abort()
+      searchAbortRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     setStatus('Loading Montreal...')
