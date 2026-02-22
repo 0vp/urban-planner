@@ -1,3 +1,5 @@
+import { fetchFallbackRoads } from './api'
+
 const GEOCODER_URL =
   'https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates'
 const OSM_ARCGIS_SERVICE_ROOT = 'https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services'
@@ -57,8 +59,64 @@ function getBoundsFromCenter(center, radiusMeters = 2000) {
   }
 }
 
-export async function geocodeLocation(query) {
-  const url = `${GEOCODER_URL}?f=json&singleLine=${encodeURIComponent(query)}&outFields=*&maxLocations=1`
+function haversineDistanceMeters(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const lon1 = (Number(a[0]) * Math.PI) / 180
+  const lat1 = (Number(a[1]) * Math.PI) / 180
+  const lon2 = (Number(b[0]) * Math.PI) / 180
+  const lat2 = (Number(b[1]) * Math.PI) / 180
+  if (![lon1, lat1, lon2, lat2].every(Number.isFinite)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const dLat = lat2 - lat1
+  const dLon = lon2 - lon1
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
+  return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
+}
+
+function scoreCandidate(candidate, preferredCenter) {
+  const baseScore = Number(candidate?.score) || 0
+  if (!preferredCenter) {
+    return baseScore
+  }
+
+  const x = Number(candidate?.location?.x)
+  const y = Number(candidate?.location?.y)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return baseScore
+  }
+
+  const distanceMeters = haversineDistanceMeters(preferredCenter, [x, y])
+  if (!Number.isFinite(distanceMeters)) {
+    return baseScore
+  }
+
+  const distancePenalty = Math.min(20, distanceMeters / 1500)
+  return baseScore - distancePenalty
+}
+
+export async function geocodeLocation(query, options = {}) {
+  const preferredCenter = Array.isArray(options.preferredCenter) && options.preferredCenter.length >= 2
+    ? [Number(options.preferredCenter[0]), Number(options.preferredCenter[1])]
+    : null
+
+  const queryParams = new URLSearchParams({
+    f: 'json',
+    singleLine: query,
+    outFields: '*',
+    maxLocations: '8',
+  })
+  if (preferredCenter && preferredCenter.every(Number.isFinite)) {
+    queryParams.set('location', `${preferredCenter[0]},${preferredCenter[1]}`)
+    queryParams.set('distance', '50000')
+  }
+
+  const url = `${GEOCODER_URL}?${queryParams.toString()}`
 
   const response = await fetch(url)
   if (!response.ok) {
@@ -70,7 +128,9 @@ export async function geocodeLocation(query) {
     throw new Error('Location not found')
   }
 
-  const candidate = data.candidates[0]
+  const candidate = [...data.candidates]
+    .sort((a, b) => scoreCandidate(b, preferredCenter) - scoreCandidate(a, preferredCenter))[0]
+
   return {
     location: candidate.location,
     address: candidate.address,
@@ -200,7 +260,7 @@ export async function fetchBuildings(center, countryCode, radiusMeters = 1200) {
 }
 
 export async function fetchRoads(center, countryCode, radiusMeters = 1200) {
-  const rows = await queryRegionalFeatures({
+  let rows = await queryRegionalFeatures({
     center,
     radiusMeters,
     countryCode,
@@ -210,6 +270,20 @@ export async function fetchRoads(center, countryCode, radiusMeters = 1200) {
     limit: MAX_ROADS,
   })
 
+  if (!rows.length) {
+    try {
+      const fallbackRows = await fetchFallbackRoads({ center, radiusMeters })
+      if (fallbackRows.length) {
+        rows = fallbackRows.map((feature) => ({
+          attributes: feature.attributes || {},
+          geometry: feature.geometry || {},
+          __fallbackId: feature.id,
+        }))
+      }
+    } catch {
+    }
+  }
+
   return rows.map((feature) => {
     const attrs = feature.attributes || {}
     const geom = feature.geometry || {}
@@ -218,7 +292,7 @@ export async function fetchRoads(center, countryCode, radiusMeters = 1200) {
 
     return {
       entityType: 'road',
-      id: `road_${attrs.OBJECTID || crypto.randomUUID()}`,
+      id: feature.__fallbackId || `road_${attrs.OBJECTID || crypto.randomUUID()}`,
       geometry: {
         type: 'polyline',
         paths: geom.paths || [],
@@ -324,7 +398,9 @@ function computePolygonCenter(ring) {
 
 export async function fetchCityData(locationQuery, options = {}) {
   const radiusMeters = normalizeRadiusMeters(options.radiusMeters)
-  const geocodeResult = await geocodeLocation(locationQuery)
+  const geocodeResult = await geocodeLocation(locationQuery, {
+    preferredCenter: options.preferredCenter,
+  })
   const center = [geocodeResult.location.x, geocodeResult.location.y]
   const countryCode = geocodeResult.countryCode
 

@@ -1,6 +1,15 @@
 from pathlib import Path
+import json
+import re
+from urllib import error as url_error
+from urllib import request as url_request
 
 from fastapi import APIRouter, HTTPException, Query
+
+try:
+    import requests
+except ImportError:  # pragma: no cover - runtime fallback
+    requests = None
 
 from planner_api.models import PlannerMapPayload, PlannerMapResponse
 from planner_api.storage import PlannerStorage
@@ -8,6 +17,127 @@ from planner_api.storage import PlannerStorage
 
 router = APIRouter(prefix="/api/planner", tags=["planner"])
 storage = PlannerStorage(Path(__file__).resolve().parent.parent / "data" / "planner")
+OVERPASS_URLS = (
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+
+
+def _parse_number(value: str | None) -> float | None:
+    if not value:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _road_width_from_tags(tags: dict[str, str]) -> float:
+    width = _parse_number(tags.get("width"))
+    if width and width > 0:
+        return max(2.0, min(30.0, width))
+    lanes = _parse_number(tags.get("lanes"))
+    if lanes and lanes > 0:
+        return max(4.0, min(30.0, lanes * 3.2))
+    return 6.0
+
+
+def _query_overpass_roads(lon: float, lat: float, radius_meters: int) -> list[dict]:
+    effective_radius = max(300, min(radius_meters, 600))
+    query = (
+        "[out:json][timeout:16];"
+        f"way(around:{effective_radius},{lat},{lon})"
+        "[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$\"];"
+        "out geom qt;"
+    )
+    raw: str | None = None
+    for endpoint in OVERPASS_URLS:
+        if requests is not None:
+            try:
+                response = requests.post(
+                    endpoint,
+                    data=query,
+                    headers={
+                        "Content-Type": "text/plain; charset=utf-8",
+                        "User-Agent": "urban-planner/1.0",
+                    },
+                    timeout=20,
+                )
+                if response.status_code >= 400:
+                    continue
+                raw = response.text
+            except requests.RequestException:
+                continue
+        else:
+            req = url_request.Request(
+                endpoint,
+                data=query.encode("utf-8"),
+                headers={
+                    "Content-Type": "text/plain; charset=utf-8",
+                    "User-Agent": "urban-planner/1.0",
+                },
+                method="POST",
+            )
+            try:
+                with url_request.urlopen(req, timeout=20) as response:
+                    raw = response.read().decode("utf-8")
+            except (url_error.URLError, TimeoutError):
+                continue
+
+        if not raw or raw.lstrip().startswith("<"):
+            raw = None
+            continue
+        break
+
+    if raw is None:
+        raise HTTPException(status_code=502, detail="Road fallback provider is unavailable")
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="Road fallback provider returned invalid data") from exc
+    elements = payload.get("elements") if isinstance(payload, dict) else None
+    if not isinstance(elements, list):
+        return []
+
+    features: list[dict] = []
+    for element in elements:
+        if element.get("type") != "way":
+            continue
+        geometry = element.get("geometry")
+        if not isinstance(geometry, list) or len(geometry) < 2:
+            continue
+
+        path = []
+        for point in geometry:
+            x = point.get("lon")
+            y = point.get("lat")
+            if x is None or y is None:
+                continue
+            path.append([x, y, 0])
+        if len(path) < 2:
+            continue
+
+        tags = element.get("tags") if isinstance(element.get("tags"), dict) else {}
+        features.append({
+            "entityType": "road",
+            "id": f"road_osm_{element.get('id')}",
+            "geometry": {
+                "type": "polyline",
+                "paths": [path],
+            },
+            "attributes": {
+                "name": tags.get("name") or "Road",
+                "type": tags.get("highway") or "road",
+                "width": _road_width_from_tags(tags),
+            },
+        })
+
+    return features
 
 
 @router.get("/map", response_model=PlannerMapResponse)
@@ -24,3 +154,12 @@ def put_map(payload: PlannerMapPayload) -> PlannerMapResponse:
         return storage.write(payload)
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Failed to save map") from exc
+
+
+@router.get("/osm/roads")
+def get_osm_roads(
+    lon: float = Query(..., ge=-180, le=180),
+    lat: float = Query(..., ge=-90, le=90),
+    radius_meters: int = Query(1200, ge=300, le=10000),
+) -> dict[str, list[dict]]:
+    return {"features": _query_overpass_roads(lon, lat, radius_meters)}

@@ -213,6 +213,23 @@ function getTileBounds(x, y, zoom) {
   }
 }
 
+function applyRadiusClipShader(material, radiusUniform, cacheKey) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.plannerRadius = radiusUniform
+    shader.vertexShader = `varying vec3 vPlannerPosition;\n${shader.vertexShader}`
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n  vPlannerPosition = transformed;',
+      )
+    shader.fragmentShader = `uniform float plannerRadius;\nvarying vec3 vPlannerPosition;\n${shader.fragmentShader}`
+      .replace(
+        '#include <clipping_planes_fragment>',
+        '#include <clipping_planes_fragment>\n  if (dot(vPlannerPosition.xy, vPlannerPosition.xy) > plannerRadius * plannerRadius) discard;',
+      )
+  }
+  material.customProgramCacheKey = () => cacheKey
+}
+
 export function ThreePlannerShell() {
   const [entityType, setEntityType] = useState('building')
   const [locationInput, setLocationInput] = useState(DEFAULT_LOCATION)
@@ -249,14 +266,14 @@ export function ThreePlannerShell() {
   const raycasterRef = useRef(new THREE.Raycaster())
   const pointerRef = useRef(new THREE.Vector2())
   raycasterRef.current.params.Line.threshold = 8
-  raycasterRef.current.firstHitOnly = true
+  raycasterRef.current.firstHitOnly = false
 
   const tilesetRef = useRef(null)
   const tileRecordsRef = useRef(new Map())
-  const tileDistanceCacheRef = useRef(new Map())
   const enuFrameRef = useRef(buildEnuFrame(DEFAULT_VIEW_STATE.longitude, DEFAULT_VIEW_STATE.latitude, 0))
   const mapViewStateRef = useRef(DEFAULT_VIEW_STATE)
   const renderRadiusMetersRef = useRef(DEFAULT_FETCH_RADIUS_METERS)
+  const radiusClipUniformRef = useRef({ value: DEFAULT_FETCH_RADIUS_METERS })
   const pendingSyncRef = useRef(false)
   const syncQueuedRef = useRef(false)
   const syncTimerRef = useRef(0)
@@ -437,7 +454,6 @@ export function ThreePlannerShell() {
 
   const clearTileRecords = useCallback(() => {
     const records = tileRecordsRef.current
-    tileDistanceCacheRef.current.clear()
     const i3sGroup = i3sGroupRef.current
     if (!i3sGroup) {
       records.clear()
@@ -642,6 +658,7 @@ export function ThreePlannerShell() {
       roughness: 0.9,
       flatShading: true,
     })
+    applyRadiusClipShader(material, radiusClipUniformRef.current, 'planner-radius-clip-i3s-v2')
 
     const mesh = new THREE.Mesh(geometry, material)
     mesh.castShadow = false
@@ -677,51 +694,25 @@ export function ThreePlannerShell() {
     return record
   }, [])
 
-  const estimateTileDistanceMeters = useCallback((tile) => {
-    const tileId = tile?.id
-    const cache = tileDistanceCacheRef.current
-    if (tileId && cache.has(tileId)) {
-      return cache.get(tileId)
+  const findVisibleBuildingKeyByFeatureId = useCallback((featureId) => {
+    if (!Number.isFinite(featureId) || featureId < 0) {
+      return null
     }
 
-    const frame = enuFrameRef.current
-    let distance = Number.POSITIVE_INFINITY
+    for (const record of tileRecordsRef.current.values()) {
+      if (!record?.mesh?.visible || !record?.buildingToVertices) {
+        continue
+      }
 
-    const headerMbs = tile?.header?.mbs
-    if (frame && Array.isArray(headerMbs) && headerMbs.length >= 3) {
-      const x = Number(headerMbs[0])
-      const y = Number(headerMbs[1])
-      const z = Number(headerMbs[2])
-      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-        if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
-          const enu = ecefToEnu(lonLatToECEF(x, y, z), frame)
-          if (Number.isFinite(enu[0]) && Number.isFinite(enu[1])) {
-            distance = Math.hypot(enu[0], enu[1])
-          }
-        } else {
-          const enu = ecefToEnu([x, y, z], frame)
-          if (Number.isFinite(enu[0]) && Number.isFinite(enu[1])) {
-            distance = Math.hypot(enu[0], enu[1])
-          }
+      for (const key of record.buildingToVertices.keys()) {
+        const parsed = parseBuildingKey(key)
+        if (parsed.featureId === featureId) {
+          return key
         }
       }
     }
 
-    if (!Number.isFinite(distance) && frame) {
-      const positions = tile?.content?.attributes?.positions?.value || tile?.content?.attributes?.positions
-      if (positions?.length >= 3) {
-        const enu = ecefToEnu([positions[0], positions[1], positions[2]], frame)
-        if (Number.isFinite(enu[0]) && Number.isFinite(enu[1])) {
-          distance = Math.hypot(enu[0], enu[1])
-        }
-      }
-    }
-
-    const safeDistance = Number.isFinite(distance) ? distance : 0
-    if (tileId) {
-      cache.set(tileId, safeDistance)
-    }
-    return safeDistance
+    return null
   }, [])
 
   const syncTilesWithView = useCallback(async () => {
@@ -755,11 +746,10 @@ export function ThreePlannerShell() {
       })
 
       await tileset.selectTiles([viewport])
-      const radiusLimit = renderRadiusMetersRef.current
       const selectedTiles = (tileset.selectedTiles || []).filter((tile) => {
         const positions = tile?.content?.attributes?.positions?.value || tile?.content?.attributes?.positions
         const isMesh = !tile?.type || tile.type === 'mesh'
-        return isMesh && positions?.length && estimateTileDistanceMeters(tile) <= radiusLimit
+        return isMesh && positions?.length
       })
       const selectedIds = new Set(selectedTiles.map((tile) => tile.id))
       const records = tileRecordsRef.current
@@ -783,9 +773,7 @@ export function ThreePlannerShell() {
       }
 
       for (const [tileId, record] of records.entries()) {
-        if (!selectedIds.has(tileId)) {
-          record.mesh.visible = false
-        }
+        record.mesh.visible = selectedIds.has(tileId)
       }
 
       if (records.size > TILE_CACHE_LIMIT) {
@@ -817,13 +805,27 @@ export function ThreePlannerShell() {
 
       const selectedKey = selectedBuildingKeyRef.current
       if (selectedKey) {
-        const { tileId } = parseBuildingKey(selectedKey)
-        if (!records.has(tileId) || !records.get(tileId)?.mesh?.visible) {
-          setSelectedBuildingKey(null)
-          setSelectedFeatureId(null)
-          setSelectedSourceType(null)
-          setSelectedBuildingAttrs(null)
-          selectedBuildingKeyRef.current = null
+        const parsed = parseBuildingKey(selectedKey)
+        const selectedRecord = records.get(parsed.tileId)
+        const selectedStillVisible = Boolean(
+          selectedRecord?.mesh?.visible
+          && selectedRecord?.buildingToVertices?.has(selectedKey),
+        )
+
+        if (!selectedStillVisible) {
+          const fallbackKey = findVisibleBuildingKeyByFeatureId(parsed.featureId)
+          if (fallbackKey) {
+            selectedBuildingKeyRef.current = fallbackKey
+            setSelectedBuildingKey(fallbackKey)
+            setSelectedFeatureId(`i3s_${fallbackKey}`)
+            setSelectedSourceType('i3s')
+          } else {
+            setSelectedBuildingKey(null)
+            setSelectedFeatureId(null)
+            setSelectedSourceType(null)
+            setSelectedBuildingAttrs(null)
+            selectedBuildingKeyRef.current = null
+          }
         }
       }
 
@@ -834,7 +836,7 @@ export function ThreePlannerShell() {
     } finally {
       pendingSyncRef.current = false
     }
-  }, [createTileRecord, deriveMapViewState, estimateTileDistanceMeters, updateBasemapTiles, updateHighlightMesh])
+  }, [createTileRecord, deriveMapViewState, findVisibleBuildingKeyByFeatureId, updateBasemapTiles, updateHighlightMesh])
 
   const queueTileSync = useCallback(() => {
     if (syncQueuedRef.current) {
@@ -892,6 +894,7 @@ export function ThreePlannerShell() {
 
     const radiusMeters = normalizeFetchRadius(radiusInput)
     renderRadiusMetersRef.current = radiusMeters
+    radiusClipUniformRef.current.value = radiusMeters
     setActiveRadiusMeters(radiusMeters)
     setSearchRadiusInput(String(radiusMeters))
 
@@ -899,13 +902,17 @@ export function ThreePlannerShell() {
     setStatus(`Searching ${trimmed} (${radiusMeters}m radius)...`)
 
     try {
-      const cityData = await fetchCityData(trimmed, { radiusMeters })
+      const cityData = await fetchCityData(trimmed, {
+        radiusMeters,
+        preferredCenter: [mapViewStateRef.current.longitude, mapViewStateRef.current.latitude],
+      })
       setActiveLocation(cityData.location)
       setLocationInput(cityData.location)
 
       setStatus(`Found ${cityData.features.length} features. Loading saved data...`)
 
       let mergedFeatures = cityData.features
+      let savedMapUnavailable = false
 
       try {
         const savedData = await fetchPlannerMap(cityData.location)
@@ -918,14 +925,16 @@ export function ThreePlannerShell() {
             Math.abs(cf.center[1] - sf.center[1]) < 0.0001
           )
         )]
-      } catch (error) {
-        if (!(error instanceof Error) || !error.message.includes('(404)')) {
-          throw error
-        }
+      } catch {
+        savedMapUnavailable = true
       }
 
       loadFeaturesIntoState(mergedFeatures, cityData.center)
-      setStatus(`Loaded ${mergedFeatures.length} features for ${cityData.location}.`)
+      setStatus(
+        savedMapUnavailable
+          ? `Loaded ${mergedFeatures.length} features for ${cityData.location} (saved-map sync unavailable).`
+          : `Loaded ${mergedFeatures.length} features for ${cityData.location}.`,
+      )
     } catch (error) {
       setStatus(error.message || 'Failed to search location.')
     } finally {
@@ -1177,6 +1186,7 @@ export function ThreePlannerShell() {
         depthTest: true,
         side: THREE.DoubleSide,
       })
+      applyRadiusClipShader(material, radiusClipUniformRef.current, 'planner-radius-clip-feature-v1')
 
       for (const path of paths) {
         const points = []
@@ -1313,6 +1323,34 @@ export function ThreePlannerShell() {
     return { key: keyA, record }
   }, [])
 
+  const pickSelectableBuildingHit = useCallback((intersections) => {
+    for (const intersection of intersections) {
+      const point = intersection?.point
+      if (!point || Math.hypot(point.x, point.y) > renderRadiusMetersRef.current) {
+        continue
+      }
+
+      const hit = pickBuildingKeyFromIntersection(intersection)
+      if (!hit?.key) {
+        continue
+      }
+
+      const parsed = parseBuildingKey(hit.key)
+      if (!Number.isFinite(parsed.featureId) || parsed.featureId < 0) {
+        continue
+      }
+
+      const triangles = hit.record?.buildingToTriangles?.get(hit.key)
+      if (!triangles?.length) {
+        continue
+      }
+
+      return { ...hit, parsed }
+    }
+
+    return null
+  }, [pickBuildingKeyFromIntersection])
+
   const handleSceneClick = useCallback((event) => {
     const renderer = rendererRef.current
     const camera = cameraRef.current
@@ -1361,13 +1399,14 @@ export function ThreePlannerShell() {
       return
     }
 
-    const buildingHits = raycasterRef.current.intersectObjects(i3sGroup.children, false)
+    const visibleI3sMeshes = i3sGroup.children.filter((node) => node.visible)
+    const buildingHits = raycasterRef.current.intersectObjects(visibleI3sMeshes, false)
     if (buildingHits.length > 0) {
-      const hit = pickBuildingKeyFromIntersection(buildingHits[0])
+      const hit = pickSelectableBuildingHit(buildingHits)
       if (hit?.key) {
         attrsRequestRef.current += 1
         const requestId = attrsRequestRef.current
-        const parsed = parseBuildingKey(hit.key)
+        const parsed = hit.parsed
         selectedBuildingKeyRef.current = hit.key
         setSelectedBuildingKey(hit.key)
         setSelectedFeatureId(`i3s_${hit.key}`)
@@ -1401,7 +1440,17 @@ export function ThreePlannerShell() {
 
     const lineHits = raycasterRef.current.intersectObjects(featureGroup.children, false)
     if (lineHits.length > 0) {
-      const lineObject = lineHits[0].object
+      const lineHit = lineHits.find((hit) => {
+        const point = hit?.point
+        return point && Math.hypot(point.x, point.y) <= renderRadiusMetersRef.current
+      })
+      if (!lineHit) {
+        resetSelection()
+        setStatus(SELECT_HINT)
+        return
+      }
+
+      const lineObject = lineHit.object
       const sourceId = lineObject.userData?.sourceId
       if (sourceId) {
         attrsRequestRef.current += 1
@@ -1418,7 +1467,7 @@ export function ThreePlannerShell() {
 
     resetSelection()
     setStatus(SELECT_HINT)
-  }, [moveMode, moveSrcCoord, pickBuildingKeyFromIntersection, resetSelection, updateHighlightMesh])
+  }, [moveMode, moveSrcCoord, pickSelectableBuildingHit, resetSelection, updateHighlightMesh])
 
   useEffect(() => {
     const renderer = rendererRef.current
