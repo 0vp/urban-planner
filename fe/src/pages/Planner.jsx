@@ -1,8 +1,8 @@
-import { PlannerShell } from '../components/planner/PlannerShell'
+import { ThreePlannerShell } from '../components/planner/ThreePlannerShell'
 
 function Planner() {
   return (
-    <PlannerShell />
+    <ThreePlannerShell />
   )
 }
 
