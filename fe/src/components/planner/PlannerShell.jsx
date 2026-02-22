@@ -9,7 +9,6 @@ import * as locator from '@arcgis/core/rest/locator.js'
 import * as geometryJsonUtils from '@arcgis/core/geometry/support/jsonUtils.js'
 import '@arcgis/core/assets/esri/themes/dark/main.css'
 import { fetchPlannerMap, savePlannerMap } from '../../lib/planner/api'
-import { ThreeBatchPreview } from './ThreeBatchPreview'
 
 const GEOCODER_URL =
   'https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer'
@@ -591,12 +590,7 @@ export function PlannerShell() {
           <p>{status}</p>
         </div>
 
-        <div>
-          <p className="text-xs uppercase tracking-wide text-zinc-400 mb-2">
-            Three.js batch preview
-          </p>
-          <ThreeBatchPreview features={features} />
-        </div>
+
       </div>
 
       <div className="absolute top-14 left-72 right-0 bottom-0">
