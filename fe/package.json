@@ -9,15 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@deck.gl/core": "^8.9.36",
-    "@deck.gl/geo-layers": "^8.9.36",
-    "@deck.gl/layers": "^8.9.36",
-    "@deck.gl/react": "^8.9.36",
     "@loaders.gl/core": "^3.4.14",
     "@loaders.gl/i3s": "^3.4.14",
+    "@loaders.gl/tiles": "^3.4.14",
+    "@math.gl/core": "^3.6.3",
+    "@math.gl/web-mercator": "^3.6.3",
+    "gl-matrix": "^3.4.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router": "^7.2.0"
+    "react-router": "^7.2.0",
+    "three": "^0.181.1",
+    "three-mesh-bvh": "^0.9.8"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.8",

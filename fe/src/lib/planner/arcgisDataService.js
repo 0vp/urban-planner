@@ -30,6 +30,17 @@ const MAX_BUILDINGS = 6000
 const MAX_ROADS = 1800
 const MAX_RIVERS = 600
 const MAX_PARKS = 800
+const DEFAULT_CITY_RADIUS_METERS = 1200
+const MIN_CITY_RADIUS_METERS = 300
+const MAX_CITY_RADIUS_METERS = 10000
+
+function normalizeRadiusMeters(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CITY_RADIUS_METERS
+  }
+  return Math.round(Math.min(MAX_CITY_RADIUS_METERS, Math.max(MIN_CITY_RADIUS_METERS, parsed)))
+}
 
 function getBoundsFromCenter(center, radiusMeters = 2000) {
   const lat = center[1]
@@ -311,16 +322,17 @@ function computePolygonCenter(ring) {
   return [sumX / ring.length, sumY / ring.length]
 }
 
-export async function fetchCityData(locationQuery) {
+export async function fetchCityData(locationQuery, options = {}) {
+  const radiusMeters = normalizeRadiusMeters(options.radiusMeters)
   const geocodeResult = await geocodeLocation(locationQuery)
   const center = [geocodeResult.location.x, geocodeResult.location.y]
   const countryCode = geocodeResult.countryCode
 
   const [buildings, roads, parks, rivers] = await Promise.allSettled([
-    fetchBuildings(center, countryCode, 1200),
-    fetchRoads(center, countryCode, 1200),
-    fetchParks(center, countryCode, 1200),
-    fetchRivers(center, countryCode, 1200),
+    fetchBuildings(center, countryCode, radiusMeters),
+    fetchRoads(center, countryCode, radiusMeters),
+    fetchParks(center, countryCode, radiusMeters),
+    fetchRivers(center, countryCode, radiusMeters),
   ])
 
   const features = [
@@ -334,6 +346,7 @@ export async function fetchCityData(locationQuery) {
     location: geocodeResult.address,
     center,
     extent: geocodeResult.extent,
+    radiusMeters,
     features,
   }
 }
