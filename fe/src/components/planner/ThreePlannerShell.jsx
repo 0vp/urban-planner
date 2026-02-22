@@ -26,15 +26,12 @@ const COLORS = {
   roadSelected: [96, 165, 250, 255],
   river: [78, 168, 222, 240],
   riverSelected: [96, 165, 250, 255],
-  park: [94, 224, 139, 180],
-  parkSelected: [96, 165, 250, 220],
 }
 
 const ENTITY_OPTIONS = [
   { value: 'building', label: 'Building' },
   { value: 'road', label: 'Road' },
   { value: 'river', label: 'River' },
-  { value: 'park', label: 'Park' },
 ]
 const SELECT_HINT = 'Click a feature to select.'
 
@@ -56,9 +53,31 @@ function isWorldRoadFeature(feature) {
     layerName.includes('transport') ||
     layerName.includes('street') ||
     layerName.includes('bridge') ||
-    ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'service'].includes(
-      roadClass,
-    )
+    layerName.includes('tunnel') ||
+    layerName.includes('traffic') ||
+    ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'service', 'road', 'street', 'unclassified', 'living_street', 'track', 'path', 'pedestrian', 'footway', 'cycleway', 'steps'].includes(roadClass)
+  )
+}
+
+function isWorldWaterFeature(feature) {
+  const geometryType = feature?.geometry?.type
+  if (geometryType !== 'LineString' && geometryType !== 'MultiLineString') {
+    return false
+  }
+
+  const properties = feature?.properties || {}
+  const layerName = String(
+    properties.layerName || properties.layer || properties.vt_layer || properties._layer || '',
+  ).toLowerCase()
+  const waterClass = String(properties.class || properties.kind || properties.type || '').toLowerCase()
+
+  return (
+    layerName.includes('water') ||
+    layerName.includes('river') ||
+    layerName.includes('stream') ||
+    layerName.includes('canal') ||
+    layerName.includes('waterway') ||
+    ['river', 'stream', 'canal', 'ditch', 'drain', 'waterway'].includes(waterClass)
   )
 }
 
@@ -134,7 +153,6 @@ export function ThreePlannerShell() {
 
   const roadData = useMemo(() => buildFeatureCollection(features, 'road'), [features])
   const riverData = useMemo(() => buildFeatureCollection(features, 'river'), [features])
-  const parkData = useMemo(() => buildFeatureCollection(features, 'park'), [features])
 
   const loadFeaturesIntoState = useCallback((loadedFeatures, center) => {
     setI3sReady(false)
@@ -367,6 +385,24 @@ export function ThreePlannerShell() {
         lineWidthUnits: 'pixels',
         lineWidthMinPixels: 1,
       }),
+      new MVTLayer({
+        id: 'world-waterways-layer',
+        data: WORLD_ROADS_TILE_URL,
+        minZoom: 0,
+        maxZoom: 20,
+        pickable: false,
+        filled: false,
+        stroked: true,
+        loadOptions: {
+          mvt: {
+            coordinates: 'wgs84',
+          },
+        },
+        getLineColor: (feature) => (isWorldWaterFeature(feature) ? COLORS.river : [0, 0, 0, 0]),
+        getLineWidth: (feature) => (isWorldWaterFeature(feature) ? 2 : 0),
+        lineWidthUnits: 'pixels',
+        lineWidthMinPixels: 1,
+      }),
       new GeoJsonLayer({
         id: 'roads-layer',
         data: roadData,
@@ -393,21 +429,10 @@ export function ThreePlannerShell() {
             ? COLORS.riverSelected
             : COLORS.river,
       }),
-      new GeoJsonLayer({
-        id: 'parks-layer',
-        data: parkData,
-        pickable: true,
-        stroked: false,
-        filled: true,
-        getFillColor: (feature) =>
-          selectedFeatureId && feature.properties.sourceId === selectedFeatureId
-            ? COLORS.parkSelected
-            : COLORS.park,
-      }),
     ]
 
     return layerList
-  }, [parkData, riverData, roadData, selectedFeatureId])
+  }, [riverData, roadData, selectedFeatureId])
 
   const handleSearchSubmit = (event) => {
     event.preventDefault()
