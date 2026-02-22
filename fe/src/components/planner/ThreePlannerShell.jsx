@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import DeckGL from '@deck.gl/react'
-import { GeoJsonLayer } from '@deck.gl/layers'
-import { Tile3DLayer } from '@deck.gl/geo-layers'
+import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
+import { MVTLayer, Tile3DLayer, TileLayer } from '@deck.gl/geo-layers'
 import { I3SLoader } from '@loaders.gl/i3s'
 import { fetchCityData } from '../../lib/planner/arcgisDataService'
 import { fetchPlannerMap, savePlannerMap } from '../../lib/planner/api'
@@ -9,6 +9,10 @@ import { fetchPlannerMap, savePlannerMap } from '../../lib/planner/api'
 const DEFAULT_LOCATION = 'Montreal, Quebec, Canada'
 const I3S_SCENE_LAYER_URL =
   'https://basemaps3d.arcgis.com/arcgis/rest/services/Esri3D_Buildings_v1/SceneServer/layers/0'
+const WORLD_MAP_TILE_URL =
+  'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+const WORLD_ROADS_TILE_URL =
+  'https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer/tile/{z}/{y}/{x}.pbf'
 const DEFAULT_VIEW_STATE = {
   longitude: -73.5673,
   latitude: 45.5017,
@@ -18,8 +22,6 @@ const DEFAULT_VIEW_STATE = {
 }
 
 const COLORS = {
-  building: [156, 163, 175, 190],
-  buildingSelected: [96, 165, 250, 255],
   road: [228, 161, 27, 235],
   roadSelected: [96, 165, 250, 255],
   river: [78, 168, 222, 240],
@@ -34,6 +36,31 @@ const ENTITY_OPTIONS = [
   { value: 'river', label: 'River' },
   { value: 'park', label: 'Park' },
 ]
+const SELECT_HINT = 'Click a feature to select.'
+
+function isWorldRoadFeature(feature) {
+  const geometryType = feature?.geometry?.type
+  if (geometryType !== 'LineString' && geometryType !== 'MultiLineString') {
+    return false
+  }
+
+  const properties = feature?.properties || {}
+  const layerName = String(
+    properties.layerName || properties.layer || properties.vt_layer || properties._layer || '',
+  ).toLowerCase()
+  const roadClass = String(properties.class || properties.kind || properties.type || '').toLowerCase()
+
+  return (
+    layerName.includes('road') ||
+    layerName.includes('highway') ||
+    layerName.includes('transport') ||
+    layerName.includes('street') ||
+    layerName.includes('bridge') ||
+    ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'service'].includes(
+      roadClass,
+    )
+  )
+}
 
 function buildFeatureCollection(features, entityType) {
   const collection = []
@@ -91,9 +118,6 @@ function buildFeatureCollection(features, entityType) {
 }
 
 export function ThreePlannerShell() {
-  const i3sReadyRef = useRef(false)
-  const i3sFailedRef = useRef(false)
-
   const [entityType, setEntityType] = useState('building')
   const [locationInput, setLocationInput] = useState(DEFAULT_LOCATION)
   const [activeLocation, setActiveLocation] = useState(DEFAULT_LOCATION)
@@ -111,11 +135,8 @@ export function ThreePlannerShell() {
   const roadData = useMemo(() => buildFeatureCollection(features, 'road'), [features])
   const riverData = useMemo(() => buildFeatureCollection(features, 'river'), [features])
   const parkData = useMemo(() => buildFeatureCollection(features, 'park'), [features])
-  const buildingData = useMemo(() => buildFeatureCollection(features, 'building'), [features])
 
   const loadFeaturesIntoState = useCallback((loadedFeatures, center) => {
-    i3sReadyRef.current = false
-    i3sFailedRef.current = false
     setI3sReady(false)
     setI3sFailed(false)
 
@@ -153,24 +174,27 @@ export function ThreePlannerShell() {
 
       setStatus(`Found ${cityData.features.length} features. Loading saved data...`)
 
+      let mergedFeatures = cityData.features
+
       try {
         const savedData = await fetchPlannerMap(cityData.location)
         const savedFeatures = Array.isArray(savedData.features) ? savedData.features : []
 
-        const mergedFeatures = [...cityData.features, ...savedFeatures.filter(sf =>
+        mergedFeatures = [...cityData.features, ...savedFeatures.filter(sf =>
           !cityData.features.some(cf =>
             cf.center && sf.center &&
             Math.abs(cf.center[0] - sf.center[0]) < 0.0001 &&
             Math.abs(cf.center[1] - sf.center[1]) < 0.0001
           )
         )]
-
-        loadFeaturesIntoState(mergedFeatures, cityData.center)
-        setStatus(`Loaded ${mergedFeatures.length} features for ${cityData.location}.`)
-      } catch {
-        loadFeaturesIntoState(cityData.features, cityData.center)
-        setStatus(`Loaded ${cityData.features.length} city features for ${cityData.location}.`)
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('(404)')) {
+          throw error
+        }
       }
+
+      loadFeaturesIntoState(mergedFeatures, cityData.center)
+      setStatus(`Loaded ${mergedFeatures.length} features for ${cityData.location}.`)
     } catch (error) {
       setStatus(error.message || 'Failed to search location.')
     } finally {
@@ -208,7 +232,7 @@ export function ThreePlannerShell() {
   }, [activeLocation, features])
 
   const handleCreate = useCallback(() => {
-    setStatus(`Creating ${entityType}... (Not yet implemented in deck.gl version)`)
+    setStatus(`Create ${entityType} is not implemented yet.`)
   }, [entityType])
 
   const handleEdit = useCallback(() => {
@@ -216,7 +240,7 @@ export function ThreePlannerShell() {
       setStatus('Select a feature first.')
       return
     }
-    setStatus(`Editing ${selectedFeatureId}... (Not yet implemented in deck.gl version)`)
+    setStatus(`Edit ${selectedFeatureId} is not implemented yet.`)
   }, [selectedFeatureId])
 
   const handleDelete = useCallback(() => {
@@ -241,7 +265,7 @@ export function ThreePlannerShell() {
     if (!info?.object) {
       setSelectedFeatureId(null)
       setSelectedSourceType(null)
-      setStatus('Click on a feature to select')
+      setStatus(SELECT_HINT)
       return
     }
 
@@ -260,7 +284,7 @@ export function ThreePlannerShell() {
     if (!sourceId) {
       setSelectedFeatureId(null)
       setSelectedSourceType(null)
-      setStatus('Click on a feature to select')
+      setStatus(SELECT_HINT)
       return
     }
 
@@ -271,6 +295,29 @@ export function ThreePlannerShell() {
 
   const layers = useMemo(() => {
     const layerList = [
+      new TileLayer({
+        id: 'world-map-layer',
+        data: WORLD_MAP_TILE_URL,
+        minZoom: 0,
+        maxZoom: 16,
+        tileSize: 256,
+        pickable: false,
+        renderSubLayers: (props) => {
+          if (!props.data) {
+            return null
+          }
+
+          const {
+            tile: { bbox },
+          } = props
+
+          return new BitmapLayer(props, {
+            data: null,
+            image: props.data,
+            bounds: [bbox.west, bbox.south, bbox.east, bbox.north],
+          })
+        },
+      }),
       new Tile3DLayer({
         id: 'i3s-buildings',
         data: I3S_SCENE_LAYER_URL,
@@ -282,22 +329,43 @@ export function ThreePlannerShell() {
           },
         },
         onTileLoad: () => {
-          if (i3sReadyRef.current) {
-            return
-          }
+          setI3sReady((ready) => {
+            if (ready) {
+              return ready
+            }
 
-          i3sReadyRef.current = true
-          setI3sReady(true)
-          setStatus('ArcGIS 3D buildings loaded.')
+            setStatus('ArcGIS 3D buildings loaded.')
+            return true
+          })
         },
         onTileError: (_, message) => {
-          if (!i3sFailedRef.current) {
-            i3sFailedRef.current = true
-            setI3sFailed(true)
-          }
+          setI3sFailed((failed) => {
+            if (failed) {
+              return failed
+            }
 
-          setStatus(`I3S load issue: ${message || 'unknown error'}. Showing footprint fallback.`)
+            setStatus(`I3S load issue: ${message || 'unknown error'}.`)
+            return true
+          })
         },
+      }),
+      new MVTLayer({
+        id: 'world-roads-layer',
+        data: WORLD_ROADS_TILE_URL,
+        minZoom: 0,
+        maxZoom: 20,
+        pickable: false,
+        filled: false,
+        stroked: true,
+        loadOptions: {
+          mvt: {
+            coordinates: 'wgs84',
+          },
+        },
+        getLineColor: (feature) => (isWorldRoadFeature(feature) ? COLORS.road : [0, 0, 0, 0]),
+        getLineWidth: (feature) => (isWorldRoadFeature(feature) ? 2 : 0),
+        lineWidthUnits: 'pixels',
+        lineWidthMinPixels: 1,
       }),
       new GeoJsonLayer({
         id: 'roads-layer',
@@ -338,28 +406,8 @@ export function ThreePlannerShell() {
       }),
     ]
 
-    if (!i3sReady || i3sFailed) {
-      layerList.push(
-        new GeoJsonLayer({
-          id: 'building-fallback-layer',
-          data: buildingData,
-          pickable: true,
-          stroked: false,
-          filled: true,
-          extruded: true,
-          wireframe: false,
-          opacity: 0.85,
-          getElevation: (feature) => Math.max(6, Number(feature.properties.height || 10)),
-          getFillColor: (feature) =>
-            selectedFeatureId && feature.properties.sourceId === selectedFeatureId
-              ? COLORS.buildingSelected
-              : COLORS.building,
-        }),
-      )
-    }
-
     return layerList
-  }, [buildingData, i3sFailed, i3sReady, parkData, riverData, roadData, selectedFeatureId])
+  }, [parkData, riverData, roadData, selectedFeatureId])
 
   const handleSearchSubmit = (event) => {
     event.preventDefault()
@@ -454,7 +502,7 @@ export function ThreePlannerShell() {
           <p>Features: {features.length}</p>
           <p>Selected: {selectedFeatureId ? selectedFeatureId.slice(0, 14) : 'none'}</p>
           <p>Status: {isDirty ? 'Unsaved changes' : 'Saved'}</p>
-          <p>I3S: {i3sFailed ? 'fallback mode' : i3sReady ? 'mesh loaded' : 'loading'}</p>
+          <p>I3S: {i3sFailed ? 'failed' : i3sReady ? 'mesh loaded' : 'loading'}</p>
         </div>
 
         <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300 leading-relaxed">

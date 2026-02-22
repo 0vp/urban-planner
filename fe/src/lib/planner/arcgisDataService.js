@@ -148,7 +148,7 @@ async function queryRegionalFeatures({
         return features
       }
     } catch {
-      // try next region
+      continue
     }
   }
 

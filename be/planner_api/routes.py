@@ -14,13 +14,13 @@ storage = PlannerStorage(Path(__file__).resolve().parent.parent / "data" / "plan
 def get_map(location: str = Query(..., min_length=1, max_length=200)) -> PlannerMapResponse:
     try:
         return storage.read(location)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load map: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid planner map data") from exc
 
 
 @router.put("/map", response_model=PlannerMapResponse)
 def put_map(payload: PlannerMapPayload) -> PlannerMapResponse:
     try:
         return storage.write(payload)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to save map: {exc}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Failed to save map") from exc
