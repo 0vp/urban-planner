@@ -42,7 +42,7 @@ export function ThreePlannerShellLayout({
         style={{ cursor: moveMode ? 'default' : 'grab' }}
       />
 
-      <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex justify-center w-full px-5">
+      <div className="absolute top-5 left-1/2 -translate-x-1/2 z-40 pointer-events-none flex justify-center w-full px-5">
         <div className="w-full max-w-[1120px] h-14 rounded-[15px] border border-[#2A2A2A] bg-[#141414]/90 shadow-2xl backdrop-blur-md px-4 flex items-center gap-3 pointer-events-auto">
           <form className="flex items-center gap-3 w-full" onSubmit={handleSearchSubmit}>
             <input

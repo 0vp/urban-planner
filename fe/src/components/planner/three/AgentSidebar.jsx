@@ -23,7 +23,7 @@ export function AgentSidebar({ setStatus }) {
   return (
     <div
       aria-label="Agent Sidebar"
-      className={`absolute top-5 right-5 bottom-5 z-30 rounded-[15px] border border-[#2A2A2A] bg-[#141414]/90 shadow-2xl backdrop-blur-md flex flex-col pointer-events-auto transition-all duration-300 ease-in-out ${isAgentCollapsed ? 'w-16 p-3 items-center gap-4 overflow-hidden' : 'w-80 p-5 gap-6 overflow-visible'}`}
+      className={`absolute top-24 right-5 bottom-5 z-30 rounded-[15px] border border-[#2A2A2A] bg-[#141414]/90 shadow-2xl backdrop-blur-md flex flex-col pointer-events-auto transition-all duration-300 ease-in-out ${isAgentCollapsed ? 'w-16 p-3 items-center gap-4 overflow-hidden' : 'w-80 p-5 gap-6 overflow-visible'}`}
     >
       {isAgentCollapsed ? (
         <div className="flex flex-col gap-4 w-full items-center mt-2 overflow-visible animate-[fadeIn_300ms_ease-in]">
