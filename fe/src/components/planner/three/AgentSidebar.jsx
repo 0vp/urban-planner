@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { buildAgentWebSocketUrl } from '../../../lib/planner/api'
 
 const MAX_CHAT_MESSAGES = 40
@@ -138,6 +139,63 @@ function makeRunMessage(requestId) {
 
 function getVisibleToolEvents(toolEvents) {
   return (Array.isArray(toolEvents) ? toolEvents : []).filter((toolEvent) => toolEvent?.name !== 'finish')
+}
+
+function MarkdownText({ text }) {
+  return (
+    <div className="break-words leading-relaxed [&_p]:m-0 [&_pre]:my-1 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-[#0b0b0b] [&_pre]:p-2 [&_a]:text-[#9fc5ff] [&_a]:underline">
+      <ReactMarkdown
+        components={{
+          ul({ children, ...props }) {
+            return (
+              <ul className="my-1 list-disc list-outside pl-5" {...props}>
+                {children}
+              </ul>
+            )
+          },
+          ol({ children, ...props }) {
+            return (
+              <ol className="my-1 list-decimal list-outside pl-5" {...props}>
+                {children}
+              </ol>
+            )
+          },
+          li({ children, ...props }) {
+            return (
+              <li className="my-0.5 marker:text-[#E0E0E0]" {...props}>
+                {children}
+              </li>
+            )
+          },
+          code({ children, className, ...props }) {
+            const isBlock = typeof className === 'string' && className.includes('language-')
+            if (isBlock) {
+              return (
+                <code className={`font-mono text-[11px] ${className}`} {...props}>
+                  {children}
+                </code>
+              )
+            }
+
+            return (
+              <code className="rounded bg-[#1f1f1f] px-1 py-0.5 font-mono text-[11px]" {...props}>
+                {children}
+              </code>
+            )
+          },
+          a({ children, ...props }) {
+            return (
+              <a {...props} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            )
+          },
+        }}
+      >
+        {typeof text === 'string' ? text : ''}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 export function AgentSidebar({ setStatus, activeLocation }) {
@@ -309,9 +367,9 @@ export function AgentSidebar({ setStatus, activeLocation }) {
               message.role === 'user' ? (
                 <div
                   key={`user-${index}`}
-                  className="self-end max-w-[90%] rounded-lg border border-[#333333] bg-[#1A1A1A] px-2.5 py-2 text-[#E0E0E0] whitespace-pre-wrap"
+                  className="self-end max-w-[90%] rounded-lg border border-[#333333] bg-[#1A1A1A] px-2.5 py-2 text-[#E0E0E0]"
                 >
-                  {message.text}
+                  <MarkdownText text={message.text} />
                 </div>
               ) : message.role === 'error' ? (
                 <div
@@ -330,9 +388,9 @@ export function AgentSidebar({ setStatus, activeLocation }) {
                       toolEvent.name === 'message' && typeof toolEvent.args?.text === 'string' ? (
                         <div
                           key={`tool-message-${message.requestId || index}-${toolIndex}`}
-                          className="self-start max-w-[90%] rounded-lg border border-[#2A2A2A] bg-[#111111] px-2.5 py-2 text-[#E0E0E0] whitespace-pre-wrap"
+                          className="self-start max-w-[90%] rounded-lg border border-[#2A2A2A] bg-[#111111] px-2.5 py-2 text-[#E0E0E0]"
                         >
-                          {toolEvent.args.text}
+                          <MarkdownText text={toolEvent.args.text} />
                         </div>
                       ) : (
                         <details key={`tool-${message.requestId || index}-${toolIndex}`} className="self-start w-full rounded-md border border-[#252525] bg-[#0c0c0c] px-2 py-1.5">
@@ -354,8 +412,8 @@ export function AgentSidebar({ setStatus, activeLocation }) {
                     ))}
 
                     {summaryText ? (
-                      <div className="self-start max-w-[90%] rounded-lg border border-[#2A2A2A] bg-[#111111] px-2.5 py-2 text-[#E0E0E0] whitespace-pre-wrap">
-                        {summaryText}
+                      <div className="self-start max-w-[90%] rounded-lg border border-[#2A2A2A] bg-[#111111] px-2.5 py-2 text-[#E0E0E0]">
+                        <MarkdownText text={summaryText} />
                       </div>
                     ) : null}
 

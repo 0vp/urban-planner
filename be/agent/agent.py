@@ -42,14 +42,24 @@ class WBAgent:
         if self.assistant is not None:
             return self.assistant
 
+        desired_description = description or UP_SYSTEM_PROMPT
+        desired_tools = tools or default_tools()
+
         if self.assistant_id:
             self.assistant = await self.client.get_assistant(self.assistant_id)
+            existing_tools = getattr(self.assistant, "tools", None) or []
+            if not existing_tools:
+                self.assistant = await self.client.update_assistant(
+                    self.assistant_id,
+                    description=desired_description,
+                    tools=desired_tools,
+                )
             return self.assistant
 
         self.assistant = await self.client.create_assistant(
             name=name,
-            description=description or UP_SYSTEM_PROMPT,
-            tools=tools or default_tools(),
+            description=desired_description,
+            tools=desired_tools,
         )
         self.assistant_id = getattr(self.assistant, "assistant_id", None)
         return self.assistant
@@ -96,6 +106,14 @@ class WBAgent:
                 return RunResult(
                     summary=self.runtime.finish_summary,
                     tool_events=self.runtime.tool_events,
+                )
+
+            response_text = self._extract_response_text(response)
+            if response_text is not None:
+                return RunResult(
+                    summary=response_text,
+                    tool_events=self.runtime.tool_events,
+                    raw_response=response_text,
                 )
 
             if attempt == self.max_iterations - 1:
@@ -156,6 +174,21 @@ class WBAgent:
     @staticmethod
     def _requires_action(response: Any) -> bool:
         return getattr(response, "status", None) == "REQUIRES_ACTION" and bool(getattr(response, "tool_calls", None))
+
+    @staticmethod
+    def _extract_response_text(response: Any) -> Optional[str]:
+        content = None
+
+        if isinstance(response, dict):
+            content = response.get("content") or response.get("message")
+        else:
+            content = getattr(response, "content", None) or getattr(response, "message", None)
+
+        if isinstance(content, str):
+            content = content.strip()
+            return content or None
+
+        return None
 
     @staticmethod
     def _parse_tool_call(tool_call: Any) -> tuple[str, str, Dict[str, Any]]:

@@ -8,6 +8,7 @@ dependencies = [
     "backboard-sdk>=1.5.2",
     "fastapi>=0.116.1",
     "python-dotenv>=1.2.1",
+    "python-multipart>=0.0.22",
     "requests>=2.32.0",
     "uvicorn>=0.35.0",
     "websockets>=16.0",

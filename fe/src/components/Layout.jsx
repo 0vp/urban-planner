@@ -29,6 +29,12 @@ function Layout() {
                   Planner
                 </Link>
                 <Link
+                  to="/memory"
+                  className="text-zinc-400 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors"
+                >
+                  Memory
+                </Link>
+                <Link
                   to="/about"
                   className="text-zinc-400 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors"
                 >

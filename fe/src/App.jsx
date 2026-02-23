@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import Home from './pages/Home'
 import About from './pages/About'
 import Planner from './pages/Planner'
+import Memory from './pages/Memory'
 
 const router = createBrowserRouter([
   {
@@ -20,6 +21,10 @@ const router = createBrowserRouter([
       {
         path: 'planner',
         element: <Planner />,
+      },
+      {
+        path: 'memory',
+        element: <Memory />,
       },
     ],
   },

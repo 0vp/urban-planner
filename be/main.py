@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from planner_api.agent_ws import router as agent_ws_router
+from planner_api.backboard import router as backboard_router
 from planner_api.routes import router as planner_router
 
 
@@ -17,6 +18,7 @@ app.add_middleware(
 
 app.include_router(planner_router)
 app.include_router(agent_ws_router)
+app.include_router(backboard_router)
 
 
 @app.get("/health")
