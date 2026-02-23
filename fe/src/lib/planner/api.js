@@ -91,3 +91,11 @@ export async function fetchFallbackRoads({ center, radiusMeters, signal }) {
   })
   return Array.isArray(data?.features) ? data.features : []
 }
+
+export function buildAgentWebSocketUrl() {
+  const baseUrl = new URL(API_BASE_URL)
+  baseUrl.protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  baseUrl.pathname = '/api/agent/ws'
+  baseUrl.search = ''
+  return baseUrl.toString()
+}

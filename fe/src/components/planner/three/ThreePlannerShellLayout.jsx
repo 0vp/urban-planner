@@ -112,7 +112,7 @@ export function ThreePlannerShellLayout({
         status={status}
       />
 
-      <AgentSidebar setStatus={setStatus} />
+      <AgentSidebar setStatus={setStatus} activeLocation={activeLocation} />
     </div>
   )
 }
