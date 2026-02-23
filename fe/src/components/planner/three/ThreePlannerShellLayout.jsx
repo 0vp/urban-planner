@@ -38,14 +38,22 @@ export function ThreePlannerShellLayout({
   defaultLocation,
 }) {
   return (
-    <div className="fixed top-16 left-0 right-0 bottom-0 bg-zinc-950 text-zinc-100">
-      <div className="absolute top-0 left-0 right-0 h-14 z-20 border-b border-zinc-800 bg-zinc-900/95 backdrop-blur px-4 flex items-center gap-2">
-        <form className="flex items-center gap-2 w-full" onSubmit={handleSearchSubmit}>
+    <div className="fixed inset-0 bg-[#0D0D0D] text-[#8b8b8b] overflow-hidden pointer-events-none">
+      {/* 3D Scene Background */}
+      <div
+        ref={mountRef}
+        className="absolute inset-0 z-0 pointer-events-auto"
+        style={{ cursor: moveMode ? 'crosshair' : 'grab' }}
+      />
+
+      {/* Top Search Bar */}
+      <div className="absolute top-5 left-1/2 -translate-x-1/2 w-[min(1120px,calc(100%-3rem))] h-14 z-20 rounded-[15px] border border-[#2A2A2A] bg-[#141414]/90 shadow-2xl backdrop-blur-md px-4 flex items-center gap-3 pointer-events-auto">
+        <form className="flex items-center gap-3 w-full" onSubmit={handleSearchSubmit}>
           <input
             value={locationInput}
             onChange={(event) => setLocationInput(event.target.value)}
             placeholder="Search location (e.g., Montreal)"
-            className="flex-1 h-9 rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none focus:border-zinc-500"
+            className="flex-1 h-9 rounded-lg border border-[#2A2A2A] bg-[#0D0D0D] px-3 text-sm text-[#E0E0E0] outline-none focus:border-[#555555] transition-colors placeholder:text-[#666666]"
           />
           <input
             type="number"
@@ -56,12 +64,13 @@ export function ThreePlannerShellLayout({
             onChange={(event) => setSearchRadiusInput(event.target.value)}
             placeholder="Radius (m)"
             title="Fetch/render radius (meters)"
-            className="w-28 h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm outline-none focus:border-zinc-500"
+            className="w-28 h-9 rounded-lg border border-[#2A2A2A] bg-[#0D0D0D] px-3 text-sm text-[#E0E0E0] outline-none focus:border-[#555555] transition-colors placeholder:text-[#666666]"
           />
+          <div className="h-5 w-px bg-[#2A2A2A] mx-1" />
           <button
             type="submit"
             disabled={isLoading}
-            className="h-9 px-3 rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-60 text-sm"
+            className="h-9 px-4 rounded-lg bg-[#E0E0E0] text-[#0D0D0D] font-medium hover:bg-white disabled:opacity-50 transition-colors text-sm"
           >
             Search
           </button>
@@ -69,7 +78,7 @@ export function ThreePlannerShellLayout({
             type="button"
             disabled={isLoading}
             onClick={() => handleSearchAndLoad(defaultLocation, searchRadiusInput)}
-            className="h-9 px-3 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-sm"
+            className="h-9 px-4 rounded-lg bg-[#2A2A2A] text-[#E0E0E0] hover:bg-[#333333] disabled:opacity-50 transition-colors text-sm font-medium"
           >
             Montreal
           </button>
@@ -77,28 +86,31 @@ export function ThreePlannerShellLayout({
             type="button"
             disabled={isSaving || isLoading}
             onClick={handleSave}
-            className="h-9 px-3 rounded-md bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-sm"
+            className="h-9 px-4 rounded-lg bg-[#333333] text-[#E0E0E0] hover:bg-[#444444] disabled:opacity-50 transition-colors text-sm font-medium ml-auto"
           >
             Save
           </button>
         </form>
       </div>
 
-      <div className="absolute top-14 left-0 bottom-0 w-72 z-10 border-r border-zinc-800 bg-zinc-900/95 backdrop-blur p-4 space-y-4 overflow-y-auto">
+      {/* Left Sidebar */}
+      <div className="absolute top-5 left-5 bottom-5 w-80 z-30 rounded-[15px] border border-[#2A2A2A] bg-[#141414]/90 shadow-2xl backdrop-blur-md p-5 flex flex-col gap-6 overflow-y-auto custom-scrollbar pointer-events-auto">
+        {/* Location Info */}
         <div>
-          <p className="text-xs uppercase tracking-wide text-zinc-400">Active location</p>
-          <p className="text-sm mt-1 break-words">{activeLocation}</p>
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] mb-1.5">Active Location</h2>
+          <p className="text-sm font-medium text-[#E0E0E0] break-words leading-snug">{activeLocation}</p>
         </div>
 
+        {/* Entity Type */}
         <div className="space-y-2">
-          <label className="text-xs uppercase tracking-wide text-zinc-400 block" htmlFor="entityType">
-            Entity type
+          <label className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] block" htmlFor="entityType">
+            Entity Type
           </label>
           <select
             id="entityType"
             value={entityType}
             onChange={(event) => setEntityType(event.target.value)}
-            className="w-full h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm"
+            className="w-full h-9 rounded-lg border border-[#2A2A2A] bg-[#0D0D0D] px-3 text-sm text-[#E0E0E0] outline-none focus:border-[#555555] transition-colors"
           >
             {ENTITY_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -108,33 +120,38 @@ export function ThreePlannerShellLayout({
           </select>
         </div>
 
-        <div className="grid grid-cols-1 gap-2">
-          <button
-            type="button"
-            onClick={handleCreate}
-            className="h-9 rounded-md bg-indigo-700 hover:bg-indigo-600 text-sm"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={handleEdit}
-            className="h-9 rounded-md bg-zinc-700 hover:bg-zinc-600 text-sm"
-          >
-            Edit / Move
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            className="h-9 rounded-md bg-rose-700 hover:bg-rose-600 text-sm"
-          >
-            Delete
-          </button>
+        {/* Actions */}
+        <div className="space-y-2">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] mb-1.5">Actions</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={handleCreate}
+              className="h-9 rounded-lg bg-[#2A2A2A] text-[#E0E0E0] border border-[#333333] hover:bg-[#333333] hover:border-[#444444] transition-colors text-sm font-medium"
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={handleEdit}
+              className="h-9 rounded-lg bg-[#2A2A2A] text-[#E0E0E0] border border-[#333333] hover:bg-[#333333] hover:border-[#444444] transition-colors text-sm font-medium"
+            >
+              Edit / Move
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="col-span-2 h-9 rounded-lg bg-[#2A2A2A] text-[#E0E0E0] border border-[#333333] hover:bg-[#333333] hover:border-[#444444] transition-colors text-sm font-medium"
+            >
+              Delete Selected
+            </button>
+          </div>
         </div>
 
+        {/* Move Mode Alert */}
         {moveMode && (
-          <div className="rounded-md border border-amber-700 bg-amber-950/50 p-3 text-xs text-amber-300 leading-relaxed">
-            <p>Move mode active. Click a destination on the map or press Escape to cancel.</p>
+          <div className="rounded-xl border border-[#555555] bg-[#2A2A2A] p-3.5 text-xs text-[#E0E0E0] leading-relaxed shadow-inner">
+            <p className="mb-2.5">Move mode active. Click a destination on the map or press Escape to cancel.</p>
             <button
               type="button"
               onClick={() => {
@@ -142,42 +159,49 @@ export function ThreePlannerShellLayout({
                 setMoveSrcCoord(null)
                 setStatus(SELECT_HINT)
               }}
-              className="mt-2 h-7 px-2 rounded bg-amber-800 hover:bg-amber-700 text-xs"
+              className="w-full h-8 rounded-lg bg-[#333333] hover:bg-[#444444] border border-[#555555] transition-colors text-xs font-medium"
             >
               Cancel Move
             </button>
           </div>
         )}
 
-        <div className="space-y-1 text-sm text-zinc-300">
-          <p>Features: {features.length}</p>
-          <p>Radius: {activeRadiusMeters}m</p>
-          <p>Selected: {selectedFeatureId ? String(selectedFeatureId).slice(0, 22) : 'none'}</p>
-          <p>Status: {isDirty ? 'Unsaved changes' : 'Saved'}</p>
-          <p>I3S: {i3sFailed ? 'failed' : i3sReady ? 'mesh loaded' : 'loading'}</p>
-          <p>I3S mods: {buildingMods.size}</p>
+        {/* Stats Panel */}
+        <div className="space-y-2">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] mb-1.5">Scene Stats</h2>
+          <div className="rounded-xl border border-[#2A2A2A] bg-[#0D0D0D]/50 p-3.5 space-y-2 text-xs text-[#8b8b8b]">
+            <div className="flex justify-between"><span className="text-[#666666]">Features</span><span className="text-[#E0E0E0] font-medium">{features.length}</span></div>
+            <div className="flex justify-between"><span className="text-[#666666]">Radius</span><span className="text-[#E0E0E0] font-medium">{activeRadiusMeters}m</span></div>
+            <div className="flex justify-between"><span className="text-[#666666]">Selected</span><span className="text-[#E0E0E0] font-medium truncate max-w-[120px] text-right">{selectedFeatureId ? String(selectedFeatureId) : 'none'}</span></div>
+            <div className="flex justify-between"><span className="text-[#666666]">Status</span><span className="text-[#E0E0E0] font-medium">{isDirty ? 'Unsaved changes' : 'Saved'}</span></div>
+            <div className="flex justify-between"><span className="text-[#666666]">I3S Layer</span><span className="text-[#E0E0E0] font-medium">{i3sFailed ? 'Failed' : i3sReady ? 'Loaded' : 'Loading...'}</span></div>
+            <div className="flex justify-between"><span className="text-[#666666]">I3S Mods</span><span className="text-[#E0E0E0] font-medium">{buildingMods.size}</span></div>
+          </div>
         </div>
 
+        {/* Building Attributes */}
         {selectedBuildingAttrs && (
-          <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300 leading-relaxed space-y-1">
-            <p className="text-zinc-400 uppercase tracking-wide">Building attributes</p>
-            {Object.entries(selectedBuildingAttrs).map(([key, val]) =>
-              val ? <p key={key}><span className="text-zinc-500">{key}:</span> {val}</p> : null
-            )}
+          <div className="space-y-2">
+            <h2 className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] mb-1.5">Building Attributes</h2>
+            <div className="rounded-xl border border-[#2A2A2A] bg-[#0D0D0D]/50 p-3.5 text-xs text-[#8b8b8b] space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
+              {Object.entries(selectedBuildingAttrs).map(([key, val]) =>
+                val ? (
+                  <div key={key} className="flex flex-col gap-0.5">
+                    <span className="text-[10px] text-[#666666] uppercase tracking-wider">{key}</span>
+                    <span className="text-[#E0E0E0] font-medium break-words">{val}</span>
+                  </div>
+                ) : null
+              )}
+            </div>
           </div>
         )}
 
-        <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300 leading-relaxed">
-          <p>{status}</p>
+        {/* Status Footer */}
+        <div className="mt-auto pt-4">
+          <div className="rounded-xl border border-[#2A2A2A] bg-[#0D0D0D]/50 p-3 text-xs text-[#8b8b8b] leading-relaxed text-center">
+            {status}
+          </div>
         </div>
-      </div>
-
-      <div className="absolute top-14 left-72 right-0 bottom-0">
-        <div
-          ref={mountRef}
-          className="absolute inset-0"
-          style={{ cursor: moveMode ? 'crosshair' : 'grab' }}
-        />
       </div>
     </div>
   )
