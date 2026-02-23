@@ -256,17 +256,17 @@ export function usePlannerScene({
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(60000, 60000),
-      new THREE.MeshStandardMaterial({ color: 0x0f1720, roughness: 1, metalness: 0 }),
+      new THREE.MeshStandardMaterial({ color: 0x0D0D0D, roughness: 1, metalness: 0 }),
     )
     ground.rotation.x = 0
     ground.position.z = -120
     ground.receiveShadow = false
     scene.add(ground)
 
-    const grid = new THREE.GridHelper(24000, 48, 0x1f2937, 0x111827)
+    const grid = new THREE.GridHelper(24000, 48, 0xffffff, 0xffffff)
     grid.rotation.x = Math.PI / 2
     grid.material.transparent = true
-    grid.material.opacity = 0.5
+    grid.material.opacity = 0.3
     grid.material.depthWrite = false
     grid.renderOrder = 12
     scene.add(grid)
