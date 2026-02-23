@@ -222,7 +222,29 @@ export function usePlannerInteraction({
       }
 
       const lineObject = lineHit.object
-      const sourceId = lineObject.userData?.sourceId
+      let sourceId = lineObject.userData?.sourceId
+      let entityType = lineObject.userData?.entityType
+      let name = lineObject.userData?.name || entityType || 'unnamed'
+
+      if (!sourceId && lineObject.userData?.mergedFeatureMesh) {
+        const faceIndex = Number(lineHit?.faceIndex)
+        const triangleFeatureIndices = lineObject.userData?.triangleFeatureIndices
+        const featureIds = lineObject.userData?.featureIds
+        if (
+          Number.isInteger(faceIndex)
+          && triangleFeatureIndices
+          && featureIds
+          && faceIndex >= 0
+          && faceIndex < triangleFeatureIndices.length
+        ) {
+          const featureIndex = triangleFeatureIndices[faceIndex]
+          sourceId = featureIds[featureIndex]
+          const featureMeta = sourceId ? lineObject.userData?.featureMetaById?.[sourceId] : null
+          entityType = featureMeta?.entityType || entityType
+          name = featureMeta?.name || name
+        }
+      }
+
       if (sourceId) {
         attrsRequestRef.current += 1
         selectedBuildingKeyRef.current = null
@@ -230,7 +252,7 @@ export function usePlannerInteraction({
         setSelectedBuildingAttrs(null)
         setSelectedFeatureId(sourceId)
         setSelectedSourceType('feature')
-        setStatus(`Selected ${lineObject.userData?.entityType || 'feature'}: ${lineObject.userData?.name || 'unnamed'}`)
+        setStatus(`Selected ${entityType || 'feature'}: ${name}`)
         updateHighlightMesh(null)
         return
       }
