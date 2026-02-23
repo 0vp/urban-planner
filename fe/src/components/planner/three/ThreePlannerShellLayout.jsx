@@ -39,7 +39,7 @@ export function ThreePlannerShellLayout({
       <div
         ref={mountRef}
         className="absolute inset-0 z-0 pointer-events-auto"
-        style={{ cursor: moveMode ? 'crosshair' : 'grab' }}
+        style={{ cursor: moveMode ? 'default' : 'grab' }}
       />
 
       <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex justify-center w-full px-5">

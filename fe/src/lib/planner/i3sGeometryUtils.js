@@ -245,17 +245,6 @@ export function applyModsToTileGeometry(tileRecord, buildingMods) {
       continue
     }
 
-    if (mod?.action === 'move' && Array.isArray(mod.delta) && mod.delta.length === 3) {
-      const [dx, dy, dz] = mod.delta
-      for (let i = 0; i < vertices.length; i++) {
-        const offset = vertices[i] * 3
-        positions[offset] += dx
-        positions[offset + 1] += dy
-        positions[offset + 2] += dz
-      }
-      continue
-    }
-
     if (mod?.action === 'delete') {
       let cx = 0
       let cy = 0
@@ -276,6 +265,17 @@ export function applyModsToTileGeometry(tileRecord, buildingMods) {
         positions[offset + 1] = cy
         positions[offset + 2] = cz
       }
+      continue
+    }
+
+    const hasDelta = Array.isArray(mod?.delta) && mod.delta.length === 3
+    const [dx, dy, dz] = hasDelta ? mod.delta : [0, 0, 0]
+
+    for (let i = 0; i < vertices.length; i++) {
+      const offset = vertices[i] * 3
+      positions[offset] = basePositions[offset] + dx
+      positions[offset + 1] = basePositions[offset + 1] + dy
+      positions[offset + 2] = basePositions[offset + 2] + dz
     }
   }
 }

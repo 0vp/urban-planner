@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { ecefToEnu, lonLatToECEF } from '../../../lib/planner/i3sGeometryUtils'
 import { DEFAULT_VIEW_STATE } from './constants'
 import {
@@ -195,6 +196,8 @@ export function usePlannerScene({
   i3sGroupRef,
   featureGroupRef,
   highlightGroupRef,
+  transformAnchorRef,
+  moveTransformControlsRef,
   mapViewStateRef,
   queueTileSync,
   deriveMapViewState,
@@ -275,14 +278,33 @@ export function usePlannerScene({
     const i3sGroup = new THREE.Group()
     const featureGroup = new THREE.Group()
     const highlightGroup = new THREE.Group()
+    const transformAnchor = new THREE.Object3D()
+    transformAnchor.visible = false
     scene.add(basemapGroup)
     scene.add(i3sGroup)
     scene.add(featureGroup)
     scene.add(highlightGroup)
+    scene.add(transformAnchor)
     basemapGroupRef.current = basemapGroup
     i3sGroupRef.current = i3sGroup
     featureGroupRef.current = featureGroup
     highlightGroupRef.current = highlightGroup
+    transformAnchorRef.current = transformAnchor
+
+    const moveTransformControls = new TransformControls(camera, renderer.domElement)
+    const moveTransformHelper = moveTransformControls.getHelper()
+    moveTransformControls.setMode('translate')
+    moveTransformControls.setSpace('world')
+    moveTransformControls.setSize(0.95)
+    moveTransformControls.enabled = false
+    moveTransformControls.visible = false
+    scene.add(moveTransformHelper)
+    moveTransformControlsRef.current = moveTransformControls
+
+    const onTransformDraggingChanged = (event) => {
+      controls.enabled = !event.value
+    }
+    moveTransformControls.addEventListener('dragging-changed', onTransformDraggingChanged)
 
     placeCameraFromView(DEFAULT_VIEW_STATE, [0, 0, 0])
     queueTileSync()
@@ -342,6 +364,10 @@ export function usePlannerScene({
         const child = highlightGroup.children.pop()
         disposeObject(child)
       }
+      moveTransformControls.removeEventListener('dragging-changed', onTransformDraggingChanged)
+      moveTransformControls.detach()
+      scene.remove(moveTransformHelper)
+      moveTransformControls.dispose()
       renderer.dispose()
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement)
@@ -354,6 +380,8 @@ export function usePlannerScene({
       i3sGroupRef.current = null
       featureGroupRef.current = null
       highlightGroupRef.current = null
+      transformAnchorRef.current = null
+      moveTransformControlsRef.current = null
     }
   }, [
     animationRef,
@@ -366,6 +394,7 @@ export function usePlannerScene({
     featureGroupRef,
     highlightGroupRef,
     i3sGroupRef,
+    moveTransformControlsRef,
     mountRef,
     mapViewStateRef,
     placeCameraFromView,
@@ -374,6 +403,7 @@ export function usePlannerScene({
     sceneRef,
     syncQueuedRef,
     syncTimerRef,
+    transformAnchorRef,
   ])
 
   useEffect(() => {

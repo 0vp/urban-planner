@@ -14,7 +14,7 @@ const AGENT_MODELS = [
 ]
 
 export function AgentSidebar({ setStatus }) {
-  const [isAgentCollapsed, setIsAgentCollapsed] = useState(false)
+  const [isAgentCollapsed, setIsAgentCollapsed] = useState(true)
   const [agentMode, setAgentMode] = useState(AGENT_MODES[0].value)
   const [agentModel, setAgentModel] = useState(AGENT_MODELS[0].value)
   const [agentPrompt, setAgentPrompt] = useState('')

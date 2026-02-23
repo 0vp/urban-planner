@@ -1,9 +1,24 @@
-import { useCallback, useEffect } from 'react'
-import * as THREE from 'three'
+import { useCallback, useEffect, useRef } from 'react'
 import { loadFeatureAttributes } from '@loaders.gl/i3s'
-import { computeMoveDelta } from '../../../lib/planner/i3sGeometryUtils'
 import { SELECT_HINT } from './constants'
 import { pickSelectableBuildingHit } from './interactionPicking'
+
+function readTransformMod(mod) {
+  if (mod?.action === 'delete') {
+    return {
+      deleted: true,
+      delta: [0, 0, 0],
+    }
+  }
+
+  const hasDelta = Array.isArray(mod?.delta) && mod.delta.length === 3
+  const delta = hasDelta ? mod.delta.map((value) => (Number.isFinite(value) ? value : 0)) : [0, 0, 0]
+
+  return {
+    deleted: false,
+    delta,
+  }
+}
 
 export function usePlannerInteraction({
   rendererRef,
@@ -16,8 +31,8 @@ export function usePlannerInteraction({
   renderRadiusMetersRef,
   attrsRequestRef,
   selectedBuildingKeyRef,
+  buildingModsRef,
   moveMode,
-  moveSrcCoord,
   selectedBuildingKey,
   selectedFeatureId,
   selectedSourceType,
@@ -33,8 +48,112 @@ export function usePlannerInteraction({
   setFeatures,
   updateHighlightMesh,
   getBuildingCentroid,
+  transformAnchorRef,
+  moveTransformControlsRef,
 }) {
+  const transformStateRef = useRef({
+    buildingKey: null,
+    startPosition: [0, 0, 0],
+    startDelta: [0, 0, 0],
+    isProgrammaticUpdate: false,
+  })
+  const transformDraggingRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
+
+  const detachTransformControls = useCallback((resetMode = false) => {
+    const anchor = transformAnchorRef.current
+    const moveControls = moveTransformControlsRef.current
+    if (moveControls) {
+      moveControls.detach()
+      moveControls.enabled = false
+      moveControls.visible = false
+    }
+    if (anchor) {
+      anchor.visible = false
+    }
+    transformStateRef.current.buildingKey = null
+    transformDraggingRef.current = false
+    if (resetMode) {
+      setMoveMode(false)
+      setMoveSrcCoord(null)
+    }
+  }, [moveTransformControlsRef, setMoveMode, setMoveSrcCoord, transformAnchorRef])
+
+  const attachTransformControls = useCallback((buildingKey) => {
+    if (!buildingKey) {
+      return false
+    }
+
+    const anchor = transformAnchorRef.current
+    const moveControls = moveTransformControlsRef.current
+    if (!anchor || !moveControls) {
+      return false
+    }
+
+    const centroid = getBuildingCentroid(buildingKey)
+    if (!centroid) {
+      return false
+    }
+
+    const mod = buildingModsRef.current?.get(buildingKey)
+    const currentTransform = readTransformMod(mod)
+    if (currentTransform.deleted) {
+      return false
+    }
+
+    transformStateRef.current.isProgrammaticUpdate = true
+    anchor.position.set(centroid[0], centroid[1], centroid[2])
+    anchor.visible = true
+
+    moveControls.attach(anchor)
+    moveControls.enabled = true
+    moveControls.visible = true
+
+    transformStateRef.current = {
+      buildingKey,
+      startPosition: [...centroid],
+      startDelta: [...currentTransform.delta],
+      isProgrammaticUpdate: false,
+    }
+
+    return true
+  }, [buildingModsRef, getBuildingCentroid, moveTransformControlsRef, transformAnchorRef])
+
+  const applyTransformFromAnchor = useCallback(() => {
+    const anchor = transformAnchorRef.current
+    const { buildingKey, startPosition, startDelta, isProgrammaticUpdate } = transformStateRef.current
+    if (!moveMode || !anchor || !buildingKey || isProgrammaticUpdate) {
+      return
+    }
+
+    const nextDelta = [
+      startDelta[0] + (anchor.position.x - startPosition[0]),
+      startDelta[1] + (anchor.position.y - startPosition[1]),
+      startDelta[2] + (anchor.position.z - startPosition[2]),
+    ]
+
+    setBuildingMods((previous) => {
+      const next = new Map(previous)
+      next.set(buildingKey, {
+        action: 'move',
+        delta: nextDelta,
+      })
+      return next
+    })
+    setIsDirty(true)
+  }, [moveMode, setBuildingMods, setIsDirty, transformAnchorRef])
+
+  const handleTransformDraggingChanged = useCallback((event) => {
+    const dragging = Boolean(event?.value)
+    transformDraggingRef.current = dragging
+    if (!dragging && moveMode) {
+      suppressNextClickRef.current = true
+      setStatus('Building moved.')
+    }
+  }, [moveMode, setStatus])
+
   const resetSelection = useCallback(() => {
+    detachTransformControls(true)
     attrsRequestRef.current += 1
     setSelectedFeatureId(null)
     setSelectedSourceType(null)
@@ -44,6 +163,7 @@ export function usePlannerInteraction({
     updateHighlightMesh(null)
   }, [
     attrsRequestRef,
+    detachTransformControls,
     selectedBuildingKeyRef,
     setSelectedBuildingAttrs,
     setSelectedBuildingKey,
@@ -57,20 +177,30 @@ export function usePlannerInteraction({
       setStatus('Select a feature first.')
       return
     }
+
     if (selectedSourceType === 'i3s' && selectedBuildingKey) {
-      const centroid = getBuildingCentroid(selectedBuildingKey)
-      if (!centroid) {
-        setStatus('Unable to move this building.')
+      if (moveMode) {
+        detachTransformControls(true)
+        setStatus('Edit mode disabled.')
         return
       }
       setMoveMode(true)
-      setMoveSrcCoord(centroid)
-      setStatus('Move mode: click a destination on the map.')
+      setMoveSrcCoord(null)
+      const attached = attachTransformControls(selectedBuildingKey)
+      if (!attached) {
+        setMoveMode(false)
+        setStatus('Unable to edit this building right now.')
+        return
+      }
+      setStatus('Edit mode active: drag axis arrows to move.')
       return
     }
+
     setStatus(`Edit ${selectedFeatureId} is not implemented yet.`)
   }, [
-    getBuildingCentroid,
+    attachTransformControls,
+    detachTransformControls,
+    moveMode,
     selectedBuildingKey,
     selectedFeatureId,
     selectedSourceType,
@@ -90,6 +220,7 @@ export function usePlannerInteraction({
         setStatus('No I3S building selected.')
         return
       }
+      detachTransformControls(true)
       setBuildingMods((prev) => {
         const next = new Map(prev)
         next.set(selectedBuildingKey, { action: 'delete' })
@@ -106,6 +237,7 @@ export function usePlannerInteraction({
     setIsDirty(true)
     setStatus('Feature deleted.')
   }, [
+    detachTransformControls,
     resetSelection,
     selectedBuildingKey,
     selectedFeatureId,
@@ -125,44 +257,19 @@ export function usePlannerInteraction({
       return
     }
 
+    if (transformDraggingRef.current) {
+      return
+    }
+
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false
+      return
+    }
+
     const rect = renderer.domElement.getBoundingClientRect()
     pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycasterRef.current.setFromCamera(pointerRef.current, camera)
-
-    if (moveMode) {
-      const target = new THREE.Vector3()
-      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)
-      if (!raycasterRef.current.ray.intersectPlane(plane, target)) {
-        setStatus('Move mode: click on the ground to choose destination.')
-        return
-      }
-
-      if (selectedBuildingKeyRef.current && moveSrcCoord) {
-        const destination = [target.x, target.y, target.z]
-        const delta = computeMoveDelta(moveSrcCoord, destination)
-        setBuildingMods((previous) => {
-          const next = new Map(previous)
-          const current = next.get(selectedBuildingKeyRef.current)
-          const previousDelta = current?.action === 'move' ? current.delta : [0, 0, 0]
-          next.set(selectedBuildingKeyRef.current, {
-            action: 'move',
-            delta: [
-              previousDelta[0] + delta[0],
-              previousDelta[1] + delta[1],
-              previousDelta[2] + delta[2],
-            ],
-          })
-          return next
-        })
-        setIsDirty(true)
-        setStatus('Building moved.')
-      }
-
-      setMoveMode(false)
-      setMoveSrcCoord(null)
-      return
-    }
 
     const visibleI3sMeshes = i3sGroup.children.filter((node) => node.visible)
     const buildingHits = raycasterRef.current.intersectObjects(visibleI3sMeshes, false)
@@ -177,7 +284,10 @@ export function usePlannerInteraction({
         setSelectedFeatureId(`i3s_${hit.key}`)
         setSelectedSourceType('i3s')
         setSelectedBuildingAttrs(null)
+        setMoveMode(true)
+        setMoveSrcCoord(null)
         updateHighlightMesh(hit.key)
+        attachTransformControls(hit.key)
 
         if (!Number.isFinite(parsed.featureId) || parsed.featureId < 0) {
           setStatus('Selected I3S building (attributes unavailable for this geometry).')
@@ -246,6 +356,7 @@ export function usePlannerInteraction({
       }
 
       if (sourceId) {
+        detachTransformControls(true)
         attrsRequestRef.current += 1
         selectedBuildingKeyRef.current = null
         setSelectedBuildingKey(null)
@@ -262,19 +373,18 @@ export function usePlannerInteraction({
     setStatus(SELECT_HINT)
   }, [
     attrsRequestRef,
+    attachTransformControls,
     cameraRef,
+    detachTransformControls,
     featureGroupRef,
     i3sGroupRef,
     moveMode,
-    moveSrcCoord,
     pointerRef,
     raycasterRef,
     renderRadiusMetersRef,
     rendererRef,
     resetSelection,
     selectedBuildingKeyRef,
-    setBuildingMods,
-    setIsDirty,
     setMoveMode,
     setMoveSrcCoord,
     setSelectedBuildingAttrs,
@@ -284,6 +394,25 @@ export function usePlannerInteraction({
     setStatus,
     tileRecordsRef,
     updateHighlightMesh,
+  ])
+
+  useEffect(() => {
+    const moveControls = moveTransformControlsRef.current
+    if (!moveControls) {
+      return
+    }
+
+    moveControls.addEventListener('objectChange', applyTransformFromAnchor)
+    moveControls.addEventListener('dragging-changed', handleTransformDraggingChanged)
+
+    return () => {
+      moveControls.removeEventListener('objectChange', applyTransformFromAnchor)
+      moveControls.removeEventListener('dragging-changed', handleTransformDraggingChanged)
+    }
+  }, [
+    applyTransformFromAnchor,
+    handleTransformDraggingChanged,
+    moveTransformControlsRef,
   ])
 
   useEffect(() => {
@@ -298,21 +427,45 @@ export function usePlannerInteraction({
   }, [handleSceneClick, rendererRef])
 
   useEffect(() => {
+    if (!moveMode) {
+      detachTransformControls(false)
+      return
+    }
+
+    if (selectedSourceType !== 'i3s' || !selectedBuildingKey) {
+      detachTransformControls(true)
+      return
+    }
+
+    const attached = attachTransformControls(selectedBuildingKey)
+    if (!attached) {
+      detachTransformControls(true)
+      setStatus('Unable to edit this building right now.')
+    }
+  }, [
+    attachTransformControls,
+    detachTransformControls,
+    moveMode,
+    selectedBuildingKey,
+    selectedSourceType,
+    setStatus,
+  ])
+
+  useEffect(() => {
     updateHighlightMesh(selectedBuildingKey)
   }, [selectedBuildingKey, updateHighlightMesh])
 
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape' && moveMode) {
-        setMoveMode(false)
-        setMoveSrcCoord(null)
+        detachTransformControls(true)
         setStatus(SELECT_HINT)
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [moveMode, setMoveMode, setMoveSrcCoord, setStatus])
+  }, [detachTransformControls, moveMode, setStatus])
 
   return {
     resetSelection,

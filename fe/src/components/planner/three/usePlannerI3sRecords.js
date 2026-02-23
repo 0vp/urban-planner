@@ -107,9 +107,13 @@ export function usePlannerI3sRecords({
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(highlightPositions, 3))
     const material = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(COLORS.roadSelected[0] / 255, COLORS.roadSelected[1] / 255, COLORS.roadSelected[2] / 255),
+      color: new THREE.Color(
+        (COLORS.buildingSelected?.[0] ?? COLORS.roadSelected[0]) / 255,
+        (COLORS.buildingSelected?.[1] ?? COLORS.roadSelected[1]) / 255,
+        (COLORS.buildingSelected?.[2] ?? COLORS.roadSelected[2]) / 255,
+      ),
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.58,
       depthWrite: false,
       side: THREE.DoubleSide,
     })

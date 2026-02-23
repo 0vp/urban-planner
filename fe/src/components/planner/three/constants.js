@@ -16,9 +16,10 @@ export const DEFAULT_VIEW_STATE = {
 
 export const COLORS = {
   road: [228, 161, 27, 235],
-  roadSelected: [96, 165, 250, 255],
+  roadSelected: [255, 170, 220, 255],
   river: [78, 168, 222, 240],
-  riverSelected: [96, 165, 250, 255],
+  riverSelected: [255, 170, 220, 255],
+  buildingSelected: [255, 170, 220, 255],
 }
 
 export const ENTITY_OPTIONS = [

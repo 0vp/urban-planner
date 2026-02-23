@@ -42,6 +42,8 @@ export function ThreePlannerShell() {
   const i3sGroupRef = useRef(null)
   const featureGroupRef = useRef(null)
   const highlightGroupRef = useRef(null)
+  const transformAnchorRef = useRef(null)
+  const moveTransformControlsRef = useRef(null)
   const basemapTilesRef = useRef(new Map())
 
   const raycasterRef = useRef(new THREE.Raycaster())
@@ -157,6 +159,8 @@ export function ThreePlannerShell() {
     i3sGroupRef,
     featureGroupRef,
     highlightGroupRef,
+    transformAnchorRef,
+    moveTransformControlsRef,
     mapViewStateRef,
     queueTileSync,
     deriveMapViewState,
@@ -180,8 +184,8 @@ export function ThreePlannerShell() {
     renderRadiusMetersRef,
     attrsRequestRef,
     selectedBuildingKeyRef,
+    buildingModsRef,
     moveMode,
-    moveSrcCoord,
     selectedBuildingKey,
     selectedFeatureId,
     selectedSourceType,
@@ -197,6 +201,8 @@ export function ThreePlannerShell() {
     setFeatures,
     updateHighlightMesh,
     getBuildingCentroid,
+    transformAnchorRef,
+    moveTransformControlsRef,
   })
 
   const handleCreate = useCallback(() => {

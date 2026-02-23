@@ -22,7 +22,7 @@ export function PlannerSidebar({
   selectedBuildingAttrs,
   status,
 }) {
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(true)
 
   return (
     <div
