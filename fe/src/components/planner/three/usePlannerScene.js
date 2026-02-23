@@ -5,12 +5,182 @@ import { ecefToEnu, lonLatToECEF } from '../../../lib/planner/i3sGeometryUtils'
 import { DEFAULT_VIEW_STATE } from './constants'
 import {
   applyRadiusClipShader,
-  buildPolylineRibbonGeometry,
   clamp,
   disposeObject,
   getFeaturePaths,
   lineColorForFeature,
 } from './helpers'
+
+function getFeatureWidthAndOffset(feature) {
+  const isRiver = feature.entityType === 'river'
+  const widthRaw = Number(feature?.attributes?.width)
+  const width = Number.isFinite(widthRaw)
+    ? clamp(widthRaw, 2, isRiver ? 50 : 30)
+    : isRiver
+      ? 8
+      : 6
+
+  return {
+    width,
+    zOffset: isRiver ? 0.8 : 0.6,
+  }
+}
+
+function appendRibbonSegments(path, frame, width, zOffset, positions, indices) {
+  if (!Array.isArray(path) || path.length < 2) {
+    return 0
+  }
+
+  const halfWidth = Math.max(0.5, width / 2)
+  let prevX = 0
+  let prevY = 0
+  let prevZ = 0
+  let hasPrev = false
+  let trianglesAdded = 0
+
+  for (const point of path) {
+    if (!Array.isArray(point) || point.length < 2) {
+      continue
+    }
+
+    const lon = Number(point[0])
+    const lat = Number(point[1])
+    const alt = Number(point[2] || 0)
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(alt)) {
+      continue
+    }
+
+    const ecef = lonLatToECEF(lon, lat, alt)
+    const enu = ecefToEnu(ecef, frame)
+    const x = enu[0]
+    const y = enu[1]
+    const z = enu[2]
+
+    if (!hasPrev) {
+      prevX = x
+      prevY = y
+      prevZ = z
+      hasPrev = true
+      continue
+    }
+
+    const dx = x - prevX
+    const dy = y - prevY
+    const length = Math.hypot(dx, dy)
+    if (length < 1e-3) {
+      prevX = x
+      prevY = y
+      prevZ = z
+      continue
+    }
+
+    const nx = -dy / length
+    const ny = dx / length
+    const ox = nx * halfWidth
+    const oy = ny * halfWidth
+    const z0 = prevZ + zOffset
+    const z1 = z + zOffset
+    const base = positions.length / 3
+
+    positions.push(
+      prevX + ox, prevY + oy, z0,
+      prevX - ox, prevY - oy, z0,
+      x - ox, y - oy, z1,
+      x + ox, y + oy, z1,
+    )
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+    trianglesAdded += 2
+
+    prevX = x
+    prevY = y
+    prevZ = z
+  }
+
+  return trianglesAdded
+}
+
+function buildRoadOrRiverMesh(entityType, sourceFeatures, frame, radiusUniformRef, selected = false) {
+  const positions = []
+  const indices = []
+  const triangleFeatureIndices = []
+  const featureIds = []
+  const featureMetaById = Object.create(null)
+  const featureIndexById = new Map()
+
+  for (const feature of sourceFeatures) {
+    if (feature.entityType !== entityType) {
+      continue
+    }
+
+    const paths = getFeaturePaths(feature)
+    if (!paths.length) {
+      continue
+    }
+
+    const sourceId = String(feature.id)
+    let featureIndex = featureIndexById.get(sourceId)
+    if (featureIndex === undefined) {
+      featureIndex = featureIds.length
+      featureIndexById.set(sourceId, featureIndex)
+      featureIds.push(sourceId)
+      featureMetaById[sourceId] = {
+        entityType: feature.entityType,
+        name: feature.attributes?.name || feature.entityType,
+      }
+    }
+
+    const { width, zOffset } = getFeatureWidthAndOffset(feature)
+    let totalTrianglesForFeature = 0
+
+    for (const path of paths) {
+      totalTrianglesForFeature += appendRibbonSegments(path, frame, width, zOffset, positions, indices)
+    }
+
+    for (let i = 0; i < totalTrianglesForFeature; i += 1) {
+      triangleFeatureIndices.push(featureIndex)
+    }
+  }
+
+  if (!positions.length) {
+    return null
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
+  const vertexCount = positions.length / 3
+  const indexArray = vertexCount > 65535 ? new Uint32Array(indices) : new Uint16Array(indices)
+  geometry.setIndex(new THREE.BufferAttribute(indexArray, 1))
+  geometry.computeBoundingSphere()
+
+  const color = lineColorForFeature(entityType, selected)
+  const material = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(color[0] / 255, color[1] / 255, color[2] / 255),
+    transparent: true,
+    opacity: color[3] / 255,
+    depthWrite: false,
+    depthTest: true,
+    side: THREE.DoubleSide,
+  })
+  applyRadiusClipShader(
+    material,
+    radiusUniformRef.current,
+    selected ? `planner-radius-clip-feature-selected-${entityType}-v2` : `planner-radius-clip-feature-${entityType}-v2`,
+  )
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.frustumCulled = false
+  mesh.renderOrder = selected ? 21 : 20
+  mesh.userData = {
+    mergedFeatureMesh: !selected,
+    selectionOverlay: selected,
+    entityType,
+    featureIds,
+    featureMetaById,
+    triangleFeatureIndices: triangleFeatureIndices.length ? Uint32Array.from(triangleFeatureIndices) : null,
+  }
+
+  return mesh
+}
 
 export function usePlannerScene({
   mountRef,
@@ -218,78 +388,53 @@ export function usePlannerScene({
       disposeObject(child)
     }
 
-    for (const feature of features) {
-      if (feature.entityType !== 'road' && feature.entityType !== 'river') {
-        continue
-      }
-      const paths = getFeaturePaths(feature)
-      if (!paths.length) {
-        continue
-      }
+    const roadMesh = buildRoadOrRiverMesh('road', features, frame, radiusClipUniformRef)
+    if (roadMesh) {
+      featureGroup.add(roadMesh)
+    }
 
-      const color = lineColorForFeature(feature.entityType, false)
-      const widthRaw = Number(feature?.attributes?.width)
-      const width = Number.isFinite(widthRaw)
-        ? clamp(widthRaw, 2, feature.entityType === 'river' ? 50 : 30)
-        : feature.entityType === 'river'
-          ? 8
-          : 6
-      const zOffset = feature.entityType === 'river' ? 0.8 : 0.6
-      const material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(color[0] / 255, color[1] / 255, color[2] / 255),
-        transparent: true,
-        opacity: color[3] / 255,
-        depthWrite: false,
-        depthTest: true,
-        side: THREE.DoubleSide,
-      })
-      applyRadiusClipShader(material, radiusClipUniformRef.current, 'planner-radius-clip-feature-v1')
-
-      for (const path of paths) {
-        const points = []
-        for (const point of path) {
-          if (!Array.isArray(point) || point.length < 2) {
-            continue
-          }
-          const ecef = lonLatToECEF(Number(point[0]), Number(point[1]), Number(point[2] || 0))
-          const enu = ecefToEnu(ecef, frame)
-          points.push([enu[0], enu[1], enu[2]])
-        }
-        const geometry = buildPolylineRibbonGeometry(points, width, zOffset)
-        if (!geometry) {
-          continue
-        }
-
-        const mesh = new THREE.Mesh(geometry, material)
-        mesh.renderOrder = 20
-        mesh.userData = {
-          sourceId: feature.id,
-          entityType: feature.entityType,
-          name: feature.attributes?.name || feature.entityType,
-        }
-        featureGroup.add(mesh)
-      }
+    const riverMesh = buildRoadOrRiverMesh('river', features, frame, radiusClipUniformRef)
+    if (riverMesh) {
+      featureGroup.add(riverMesh)
     }
   }, [enuFrameRef, featureGroupRef, features, radiusClipUniformRef])
 
   useEffect(() => {
     const featureGroup = featureGroupRef.current
+    const frame = enuFrameRef.current
     if (!featureGroup) {
       return
     }
 
-    for (const child of featureGroup.children) {
-      const material = child.material
-      if (!material) {
-        continue
+    for (let i = featureGroup.children.length - 1; i >= 0; i -= 1) {
+      const child = featureGroup.children[i]
+      if (child?.userData?.selectionOverlay) {
+        featureGroup.remove(child)
+        disposeObject(child)
       }
-
-      const sourceId = child.userData?.sourceId
-      const entityType = child.userData?.entityType
-      const isSelected = Boolean(selectedFeatureId && sourceId === selectedFeatureId)
-      const color = lineColorForFeature(entityType, isSelected)
-      material.color.setRGB(color[0] / 255, color[1] / 255, color[2] / 255)
-      material.opacity = color[3] / 255
     }
-  }, [featureGroupRef, features, selectedFeatureId])
+
+    if (!selectedFeatureId || !frame) {
+      return
+    }
+
+    const selectedFeature = features.find((feature) => (
+      (feature.entityType === 'road' || feature.entityType === 'river')
+      && String(feature.id) === String(selectedFeatureId)
+    ))
+    if (!selectedFeature) {
+      return
+    }
+
+    const selectedMesh = buildRoadOrRiverMesh(
+      selectedFeature.entityType,
+      [selectedFeature],
+      frame,
+      radiusClipUniformRef,
+      true,
+    )
+    if (selectedMesh) {
+      featureGroup.add(selectedMesh)
+    }
+  }, [enuFrameRef, featureGroupRef, features, radiusClipUniformRef, selectedFeatureId])
 }
