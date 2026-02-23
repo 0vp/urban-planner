@@ -122,6 +122,53 @@ export function usePlannerI3sRecords({
     highlightGroup.add(mesh)
   }, [highlightGroupRef, tileRecordsRef])
 
+  const applyLiveBuildingMove = useCallback((buildingKey, delta) => {
+    if (!buildingKey) {
+      return false
+    }
+
+    const { tileId } = parseBuildingKey(buildingKey)
+    const record = tileRecordsRef.current.get(tileId)
+    if (!record) {
+      return false
+    }
+
+    const vertices = record.buildingToVertices.get(buildingKey)
+    if (!vertices?.length) {
+      return false
+    }
+
+    const hasDelta = Array.isArray(delta) && delta.length === 3
+    const [dx, dy, dz] = hasDelta ? delta : [0, 0, 0]
+
+    for (let i = 0; i < vertices.length; i++) {
+      const offset = vertices[i] * 3
+      record.positions[offset] = record.basePositions[offset] + dx
+      record.positions[offset + 1] = record.basePositions[offset + 1] + dy
+      record.positions[offset + 2] = record.basePositions[offset + 2] + dz
+    }
+
+    record.positionAttribute.needsUpdate = true
+    return true
+  }, [tileRecordsRef])
+
+  const finalizeLiveBuildingMove = useCallback((buildingKey) => {
+    if (!buildingKey) {
+      return
+    }
+
+    const { tileId } = parseBuildingKey(buildingKey)
+    const record = tileRecordsRef.current.get(tileId)
+    if (!record) {
+      return
+    }
+
+    record.geometry.computeBoundingSphere()
+    record.geometry.computeBoundingBox()
+    record.geometry.boundsTree?.refit?.()
+    updateHighlightMesh(selectedBuildingKeyRef.current)
+  }, [selectedBuildingKeyRef, tileRecordsRef, updateHighlightMesh])
+
   const applyModsToAllTiles = useCallback((mods) => {
     for (const record of tileRecordsRef.current.values()) {
       applyModsToTileGeometry(record, mods)
@@ -274,6 +321,8 @@ export function usePlannerI3sRecords({
   return {
     clearTileRecords,
     updateHighlightMesh,
+    applyLiveBuildingMove,
+    finalizeLiveBuildingMove,
     applyModsToAllTiles,
     getBuildingCentroid,
     createTileRecord,

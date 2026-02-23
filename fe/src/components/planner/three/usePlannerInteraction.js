@@ -20,6 +20,17 @@ function readTransformMod(mod) {
   }
 }
 
+function deltasEqual(a, b, epsilon = 1e-4) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 3 || b.length !== 3) {
+    return false
+  }
+  return (
+    Math.abs(a[0] - b[0]) <= epsilon
+    && Math.abs(a[1] - b[1]) <= epsilon
+    && Math.abs(a[2] - b[2]) <= epsilon
+  )
+}
+
 export function usePlannerInteraction({
   rendererRef,
   cameraRef,
@@ -48,6 +59,8 @@ export function usePlannerInteraction({
   setFeatures,
   updateHighlightMesh,
   getBuildingCentroid,
+  applyLiveBuildingMove,
+  finalizeLiveBuildingMove,
   transformAnchorRef,
   moveTransformControlsRef,
 }) {
@@ -55,12 +68,40 @@ export function usePlannerInteraction({
     buildingKey: null,
     startPosition: [0, 0, 0],
     startDelta: [0, 0, 0],
+    pendingDelta: null,
+    hasPendingCommit: false,
     isProgrammaticUpdate: false,
   })
   const transformDraggingRef = useRef(false)
   const suppressNextClickRef = useRef(false)
 
+  const commitPendingTransform = useCallback(() => {
+    const { buildingKey, pendingDelta, hasPendingCommit } = transformStateRef.current
+    if (!buildingKey || !hasPendingCommit || !Array.isArray(pendingDelta)) {
+      return
+    }
+
+    const currentTransform = readTransformMod(buildingModsRef.current?.get(buildingKey))
+    if (currentTransform.deleted || !deltasEqual(currentTransform.delta, pendingDelta)) {
+      setBuildingMods((previous) => {
+        const next = new Map(previous)
+        next.set(buildingKey, {
+          action: 'move',
+          delta: pendingDelta,
+        })
+        return next
+      })
+      setIsDirty(true)
+    }
+
+    finalizeLiveBuildingMove(buildingKey)
+    transformStateRef.current.pendingDelta = null
+    transformStateRef.current.hasPendingCommit = false
+  }, [buildingModsRef, finalizeLiveBuildingMove, setBuildingMods, setIsDirty])
+
   const detachTransformControls = useCallback((resetMode = false) => {
+    commitPendingTransform()
+
     const anchor = transformAnchorRef.current
     const moveControls = moveTransformControlsRef.current
     if (moveControls) {
@@ -73,11 +114,13 @@ export function usePlannerInteraction({
     }
     transformStateRef.current.buildingKey = null
     transformDraggingRef.current = false
+    transformStateRef.current.pendingDelta = null
+    transformStateRef.current.hasPendingCommit = false
     if (resetMode) {
       setMoveMode(false)
       setMoveSrcCoord(null)
     }
-  }, [moveTransformControlsRef, setMoveMode, setMoveSrcCoord, transformAnchorRef])
+  }, [commitPendingTransform, moveTransformControlsRef, setMoveMode, setMoveSrcCoord, transformAnchorRef])
 
   const attachTransformControls = useCallback((buildingKey) => {
     if (!buildingKey) {
@@ -113,6 +156,8 @@ export function usePlannerInteraction({
       buildingKey,
       startPosition: [...centroid],
       startDelta: [...currentTransform.delta],
+      pendingDelta: null,
+      hasPendingCommit: false,
       isProgrammaticUpdate: false,
     }
 
@@ -132,6 +177,14 @@ export function usePlannerInteraction({
       startDelta[2] + (anchor.position.z - startPosition[2]),
     ]
 
+    transformStateRef.current.pendingDelta = nextDelta
+    transformStateRef.current.hasPendingCommit = !deltasEqual(nextDelta, startDelta)
+
+    const liveUpdated = applyLiveBuildingMove(buildingKey, nextDelta)
+    if (liveUpdated) {
+      return
+    }
+
     setBuildingMods((previous) => {
       const next = new Map(previous)
       next.set(buildingKey, {
@@ -141,16 +194,18 @@ export function usePlannerInteraction({
       return next
     })
     setIsDirty(true)
-  }, [moveMode, setBuildingMods, setIsDirty, transformAnchorRef])
+    transformStateRef.current.hasPendingCommit = false
+  }, [applyLiveBuildingMove, moveMode, setBuildingMods, setIsDirty, transformAnchorRef])
 
   const handleTransformDraggingChanged = useCallback((event) => {
     const dragging = Boolean(event?.value)
     transformDraggingRef.current = dragging
     if (!dragging && moveMode) {
+      commitPendingTransform()
       suppressNextClickRef.current = true
       setStatus('Building moved.')
     }
-  }, [moveMode, setStatus])
+  }, [commitPendingTransform, moveMode, setStatus])
 
   const resetSelection = useCallback(() => {
     detachTransformControls(true)

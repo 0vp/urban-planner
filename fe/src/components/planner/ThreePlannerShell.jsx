@@ -76,6 +76,8 @@ export function ThreePlannerShell() {
     clearBasemapTiles,
     clearTileRecords,
     updateHighlightMesh,
+    applyLiveBuildingMove,
+    finalizeLiveBuildingMove,
     applyModsToAllTiles,
     getBuildingCentroid,
     deriveMapViewState,
@@ -201,6 +203,8 @@ export function ThreePlannerShell() {
     setFeatures,
     updateHighlightMesh,
     getBuildingCentroid,
+    applyLiveBuildingMove,
+    finalizeLiveBuildingMove,
     transformAnchorRef,
     moveTransformControlsRef,
   })
