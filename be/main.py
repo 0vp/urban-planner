@@ -1,12 +1,22 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from planner_api.agent_ws import router as agent_ws_router
 from planner_api.backboard import router as backboard_router
 from planner_api.routes import router as planner_router
+from planner_api.startup_docs import sync_assistant_startup_documents
 
 
-app = FastAPI(title="Urban Planner API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await sync_assistant_startup_documents()
+    yield
+
+
+app = FastAPI(title="Urban Planner API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
