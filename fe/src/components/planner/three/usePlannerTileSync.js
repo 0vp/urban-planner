@@ -7,6 +7,7 @@ import {
   TILE_SELECTION_OVERSCAN,
   TILE_SELECTION_ZOOM_BIAS,
   TILE_SYNC_DEBOUNCE_MS,
+  TILE_VISIBILITY_GRACE_TICKS,
 } from './constants'
 import { disposeObject } from './helpers'
 
@@ -100,8 +101,13 @@ export function usePlannerTileSync({
       for (const [tileId, record] of records.entries()) {
         if (selectedIds.has(tileId)) {
           record.lastWanted = seenTick
+          record.mesh.visible = true
+          continue
         }
-        record.mesh.visible = true
+
+        const graceStartTick = record.lastWanted ?? record.lastSeen ?? seenTick
+        const isWithinGrace = seenTick - graceStartTick <= TILE_VISIBILITY_GRACE_TICKS
+        record.mesh.visible = isWithinGrace
       }
 
       if (!KEEP_LOADED_I3S_TILES && records.size > TILE_CACHE_LIMIT) {
