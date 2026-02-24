@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - runtime fallback
 
 from planner_api.models import PlannerMapPayload, PlannerMapResponse
 from planner_api.region_store import region_store
+from planner_api.simulations.data_providers import weather_provider
 from planner_api.simulations.sun import compute_sun_data
 from planner_api.simulations.traffic import simulate_traffic
 from planner_api.simulations.weather import fetch_weather
@@ -60,6 +61,40 @@ def _road_width_from_tags(tags: dict[str, str]) -> float:
     if lanes and lanes > 0:
         return max(4.0, min(30.0, lanes * 3.2))
     return 6.0
+
+
+def _road_lanes_from_tags(tags: dict[str, str]) -> float:
+    lanes = _parse_number(tags.get("lanes"))
+    if lanes and lanes > 0:
+        return max(1.0, min(8.0, lanes))
+    return 1.0
+
+
+def _road_maxspeed_from_tags(tags: dict[str, str]) -> float | None:
+    speed = _parse_number(tags.get("maxspeed"))
+    if speed and speed > 0:
+        return max(10.0, min(130.0, speed))
+    return None
+
+
+def _resolve_lat_lon(payload: dict) -> tuple[float, float]:
+    lat = payload.get("lat")
+    lon = payload.get("lon")
+    if isinstance(lat, str):
+        lat = _parse_number(lat)
+    if isinstance(lon, str):
+        lon = _parse_number(lon)
+    if lat is None or lon is None:
+        center = region_store.center
+        lat, lon = center[1], center[0]
+    return float(lat), float(lon)
+
+
+async def _weather_context_for(lat: float, lon: float) -> dict:
+    report = await weather_provider.get_weather(lat, lon)
+    context = dict(report.get("current", {}))
+    context["_meta"] = report.get("provider_meta", {})
+    return context
 
 
 def _post_overpass(endpoint: str, query: str) -> str | None:
@@ -174,6 +209,9 @@ def _query_overpass_roads(lon: float, lat: float, radius_meters: int) -> list[di
                 "name": tags.get("name") or "Road",
                 "type": tags.get("highway") or "road",
                 "width": _road_width_from_tags(tags),
+                "lanes": _road_lanes_from_tags(tags),
+                "maxspeed": _road_maxspeed_from_tags(tags),
+                "oneway": tags.get("oneway") or "no",
             },
         })
 
@@ -237,42 +275,49 @@ async def post_simulate_traffic(request: Request) -> dict:
         roads = region_store.get_roads_for_graph()
     time_of_day = payload.get("time_of_day", "default")
     polygon = payload.get("polygon")
-    return simulate_traffic(roads, time_of_day=time_of_day, polygon=polygon)
+    lat, lon = _resolve_lat_lon(payload)
+
+    weather_context = payload.get("weather_context")
+    if not isinstance(weather_context, dict):
+        weather_context = await _weather_context_for(lat, lon)
+
+    demand_multiplier = payload.get("demand_multiplier")
+    if not isinstance(demand_multiplier, (int, float)):
+        building_count = len(region_store.get_buildings_for_simulation())
+        demand_multiplier = 1.0 + min(0.2, building_count / 5000)
+
+    return simulate_traffic(
+        roads,
+        time_of_day=time_of_day,
+        polygon=polygon,
+        weather_context=weather_context,
+        demand_multiplier=float(demand_multiplier),
+    )
 
 
 @router.post("/simulate/wind")
 async def post_simulate_wind(request: Request) -> dict:
     payload = await _read_json_body(request)
-    lat = payload.get("lat")
-    lon = payload.get("lon")
-    if isinstance(lat, str):
-        lat = _parse_number(lat)
-    if isinstance(lon, str):
-        lon = _parse_number(lon)
+    lat, lon = _resolve_lat_lon(payload)
     buildings = payload.get("buildings")
-    if lat is None or lon is None:
-        center = region_store.center
-        lat, lon = center[1], center[0]
     if not isinstance(buildings, list) or not buildings:
         buildings = region_store.get_buildings_for_simulation()
-    return await simulate_wind(lat, lon, buildings)
+    weather_context = payload.get("weather_context")
+    if not isinstance(weather_context, dict):
+        weather_context = await _weather_context_for(lat, lon)
+    return await simulate_wind(lat, lon, buildings, weather_context=weather_context)
 
 
 @router.post("/simulate/sun")
 async def post_simulate_sun(request: Request) -> dict:
     payload = await _read_json_body(request)
-    lat = payload.get("lat")
-    lon = payload.get("lon")
-    if isinstance(lat, str):
-        lat = _parse_number(lat)
-    if isinstance(lon, str):
-        lon = _parse_number(lon)
-    if lat is None or lon is None:
-        center = region_store.center
-        lat, lon = center[1], center[0]
+    lat, lon = _resolve_lat_lon(payload)
     date = payload.get("date", "2025-06-21")
     hours = payload.get("hours")
-    return compute_sun_data(lat, lon, date=date, hours=hours)
+    weather_context = payload.get("weather_context")
+    if not isinstance(weather_context, dict):
+        weather_context = await _weather_context_for(lat, lon)
+    return compute_sun_data(lat, lon, date=date, hours=hours, weather_context=weather_context)
 
 
 @router.get("/weather")

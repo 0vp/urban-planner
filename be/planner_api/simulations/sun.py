@@ -42,6 +42,7 @@ def compute_sun_data(
     lon: float,
     date: str = "2025-06-21",
     hours: list[int] | None = None,
+    weather_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if hours is None:
         hours = list(range(6, 21))
@@ -51,11 +52,38 @@ def compute_sun_data(
     except ValueError:
         base_date = datetime(2025, 6, 21, tzinfo=timezone.utc)
 
+    cloud_cover = None
+    shortwave_radiation = None
+    confidence_score = 0.5
+    provider_mix: list[str] = ["astronomical"]
+    if isinstance(weather_context, dict):
+        cloud_cover = weather_context.get("cloud_cover_pct")
+        shortwave_radiation = weather_context.get("shortwave_radiation_wm2")
+        meta = weather_context.get("_meta", {})
+        if isinstance(meta, dict):
+            confidence_score = meta.get("confidence_score", confidence_score)
+            provider_mix = ["astronomical", *meta.get("provider_mix", [])]
+
+    cloud_factor = 1.0
+    if isinstance(cloud_cover, (int, float)):
+        cloud_factor = max(0.25, min(1.0, 1 - float(cloud_cover) / 100 * 0.75))
+
     positions = []
     daylight_hours = 0
+    irradiance_values: list[float] = []
     for h in hours:
         dt = base_date.replace(hour=h)
         pos = _sun_position(lat, lon, dt)
+        if pos["elevation"] > 0:
+            clear_sky = max(0.0, math.sin(math.radians(pos["elevation"]))) * 1000.0
+            irradiance = clear_sky * cloud_factor
+            if isinstance(shortwave_radiation, (int, float)):
+                irradiance = (irradiance * 0.5) + (float(shortwave_radiation) * 0.5)
+            irradiance = round(irradiance, 1)
+            irradiance_values.append(irradiance)
+        else:
+            irradiance = 0.0
+        pos["irradiance_wm2"] = irradiance
         pos["hour"] = h
         positions.append(pos)
         if pos["elevation"] > 0:
@@ -73,6 +101,7 @@ def compute_sun_data(
         "date": date,
         "positions": positions,
         "peak": {"hour": peak["hour"], "elevation": peak["elevation"], "azimuth": peak["azimuth"]},
+        "calibrated_cloud_factor": round(cloud_factor, 3),
         "daylight_hours": daylight_hours,
         "seasonal_comparison": seasons,
         "summary": {
@@ -82,5 +111,8 @@ def compute_sun_data(
             "peak_hour": peak["hour"],
             "winter_noon_elevation": seasons["winter"]["noon_elevation"],
             "summer_noon_elevation": seasons["summer"]["noon_elevation"],
+            "avg_irradiance_wm2": round(sum(irradiance_values) / max(len(irradiance_values), 1), 1) if irradiance_values else 0.0,
+            "confidence_score": confidence_score,
+            "provider_mix": provider_mix,
         },
     }

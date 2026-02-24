@@ -525,6 +525,7 @@ export async function fetchRoads(center, countryCode, radiusMeters = 1200, optio
     const geom = feature.geometry || {}
     const lanes = parseNumericOrNull(attrs.lanes)
     const width = parseNumericOrNull(attrs.width)
+    const maxspeed = parseNumericOrNull(attrs.maxspeed)
 
     return {
       entityType: 'road',
@@ -537,6 +538,9 @@ export async function fetchRoads(center, countryCode, radiusMeters = 1200, optio
         name: attrs.name || 'Road',
         type: attrs.highway || 'road',
         width: width ?? (lanes ? Math.max(4, lanes * 3.2) : 6),
+        lanes: lanes ?? 1,
+        maxspeed: maxspeed,
+        oneway: attrs.oneway || 'no',
       },
     }
   })

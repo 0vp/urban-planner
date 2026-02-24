@@ -53,3 +53,35 @@ def test_traffic_uses_approximation_and_cache_on_large_graph() -> None:
     assert first["summary"]["graph_edges"] > traffic_sim.EXACT_BETWEENNESS_MAX_EDGES
     assert second["summary"]["algorithm"] == "cache"
     assert second["summary"]["cache_hit"] is True
+
+
+def test_traffic_applies_weather_factor_and_oneway() -> None:
+    roads = [
+        {
+            "id": "oneway_1",
+            "name": "One Way Ave",
+            "type": "primary",
+            "lanes": 2,
+            "maxspeed": 60,
+            "oneway": "yes",
+            "paths": [[[-73.57, 45.50, 0], [-73.569, 45.501, 0]]],
+        }
+    ]
+
+    weather_context = {
+        "precipitation_mm": 4.0,
+        "wind_speed_kmh": 50.0,
+        "_meta": {"confidence_score": 0.82},
+    }
+    result = traffic_sim.simulate_traffic(
+        roads,
+        time_of_day="evening_rush",
+        weather_context=weather_context,
+    )
+
+    assert result["summary"]["weather_factor"] < 1.0
+    assert result["summary"]["confidence_score"] == 0.82
+    assert len(result["segments"]) == 1
+    segment = result["segments"][0]
+    assert segment["oneway"] == "yes"
+    assert segment["effective_capacity"] <= segment["capacity"]

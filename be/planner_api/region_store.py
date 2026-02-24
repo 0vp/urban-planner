@@ -159,6 +159,9 @@ class RegionStore:
                 "name": attrs.get("name", "Road"),
                 "type": attrs.get("type", "road"),
                 "width": attrs.get("width", 6),
+                "lanes": attrs.get("lanes", 1),
+                "maxspeed": attrs.get("maxspeed", attrs.get("maxspeed_kmh")),
+                "oneway": attrs.get("oneway", "no"),
                 "paths": paths,
             })
         return roads
@@ -197,6 +200,7 @@ class RegionStore:
                 "name": f.get("attributes", {}).get("name", ""),
                 "type": f.get("attributes", {}).get("type", ""),
                 "center": point,
+                "geometry": f.get("geometry"),
             })
 
         effective_radius_meters = radius_meters if isinstance(radius_meters, (float, int)) else self._radius_meters
@@ -209,13 +213,17 @@ class RegionStore:
         green_ratio = len(parks) / total
         building_density = len(buildings) / max(area_km2, 0.01)
         road_density = len(roads) / max(area_km2, 0.01)
+        road_connectivity = _road_connectivity_score(roads)
 
         walkability = min(100, int(
             25 * min(1.0, road_density / 200)
             + 25 * min(1.0, green_ratio * 5)
             + 25 * min(1.0, building_density / 500)
-            + 25 * (1 if len(parks) >= 2 else 0.5)
+            + 15 * (1 if len(parks) >= 2 else 0.5)
+            + 10 * min(1.0, road_connectivity / 0.35)
         ))
+
+        confidence_score = min(0.95, max(0.25, 0.35 + min(0.4, len(feats) / 4000) + min(0.2, road_connectivity)))
 
         return {
             "area_km2": round(area_km2, 3),
@@ -224,8 +232,11 @@ class RegionStore:
             "parks": len(parks),
             "building_density_per_km2": round(building_density, 1),
             "road_density_per_km2": round(road_density, 1),
+            "road_connectivity_score": round(road_connectivity, 3),
             "green_space_ratio": round(green_ratio, 3),
             "walkability_score": walkability,
+            "confidence_score": round(confidence_score, 3),
+            "provider_mix": ["osm/arcgis-features"],
         }
 
 
@@ -241,6 +252,35 @@ def _point_in_polygon(point: list[float], polygon: list[list[float]]) -> bool:
             inside = not inside
         j = i
     return inside
+
+
+def _road_connectivity_score(roads: list[dict[str, Any]]) -> float:
+    endpoints: dict[tuple[float, float], int] = {}
+    for road in roads:
+        geom = road.get("geometry") or {}
+        paths = geom.get("paths") if isinstance(geom, dict) else None
+        if not isinstance(paths, list):
+            continue
+        for path in paths:
+            if not isinstance(path, list) or len(path) < 2:
+                continue
+            start = path[0]
+            end = path[-1]
+            if not (isinstance(start, list) and isinstance(end, list) and len(start) >= 2 and len(end) >= 2):
+                continue
+            try:
+                s_key = (round(float(start[0]), 5), round(float(start[1]), 5))
+                e_key = (round(float(end[0]), 5), round(float(end[1]), 5))
+            except (TypeError, ValueError):
+                continue
+            endpoints[s_key] = endpoints.get(s_key, 0) + 1
+            endpoints[e_key] = endpoints.get(e_key, 0) + 1
+
+    if not endpoints:
+        return 0.0
+
+    intersections = sum(1 for degree in endpoints.values() if degree >= 3)
+    return intersections / max(len(endpoints), 1)
 
 
 region_store = RegionStore()

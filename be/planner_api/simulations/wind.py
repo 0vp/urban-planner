@@ -4,28 +4,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Optional
-
-import httpx
-
-OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
-
-
-async def fetch_wind_data(lat: float, lon: float) -> dict[str, Any]:
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current": "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
-        "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
-        "forecast_days": 1,
-        "timezone": "auto",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(OPEN_METEO_URL, params=params)
-            resp.raise_for_status()
-            return resp.json()
-    except Exception:
-        return {"current": {"wind_speed_10m": 15.0, "wind_direction_10m": 270.0, "wind_gusts_10m": 25.0}}
+from planner_api.simulations.data_providers import weather_provider
 
 
 def _wind_direction_to_vector(direction_deg: float) -> tuple[float, float]:
@@ -67,17 +46,35 @@ async def simulate_wind(
     lon: float,
     buildings: list[dict[str, Any]],
     grid_size: int = 20,
+    weather_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    weather = await fetch_wind_data(lat, lon)
+    if weather_context is None:
+        report = await weather_provider.get_weather(lat, lon)
+        current = report.get("current", {})
+        provider_meta = report.get("provider_meta", {})
+    else:
+        current = weather_context
+        provider_meta = weather_context.get("_meta", {}) if isinstance(weather_context, dict) else {}
 
-    current = weather.get("current", {})
-    base_speed = current.get("wind_speed_10m", 15.0)
-    base_direction = current.get("wind_direction_10m", 270.0)
-    gusts = current.get("wind_gusts_10m", 25.0)
+    base_speed = current.get("wind_speed_kmh", 15.0)
+    if not isinstance(base_speed, (int, float)):
+        base_speed = 15.0
+    base_direction = current.get("wind_direction_deg", 270.0)
+    if not isinstance(base_direction, (int, float)):
+        base_direction = 270.0
+    gusts = current.get("wind_gusts_kmh", max(base_speed * 1.3, 20.0))
+    if not isinstance(gusts, (int, float)):
+        gusts = max(base_speed * 1.3, 20.0)
+    cloud_cover = current.get("cloud_cover_pct")
 
     wind_dx, wind_dy = _wind_direction_to_vector(base_direction)
 
     radius_deg = 0.012
+    if isinstance(cloud_cover, (int, float)):
+        radius_deg *= max(0.8, min(1.2, 1 - (float(cloud_cover) - 50.0) * 0.002))
+
+    roughness = min(1.0, len(buildings) / 600.0)
+    terrain_drag = 1.0 - roughness * 0.25
     grid_points = []
 
     for gy in range(grid_size):
@@ -101,8 +98,8 @@ async def simulate_wind(
                 total_deflect_y += ddy
                 total_speed_delta += dspeed
 
-            final_dx = wind_dx * base_speed + total_deflect_x
-            final_dy = wind_dy * base_speed + total_deflect_y
+            final_dx = wind_dx * base_speed * terrain_drag + total_deflect_x
+            final_dy = wind_dy * base_speed * terrain_drag + total_deflect_y
             final_speed = max(0, math.sqrt(final_dx ** 2 + final_dy ** 2) + total_speed_delta * 0.3)
 
             grid_points.append({
@@ -137,5 +134,8 @@ async def simulate_wind(
             "min_speed_kmh": round(min(p["speed"] for p in grid_points), 1) if grid_points else 0,
             "wind_tunnels_detected": len(tunnel_zones),
             "calm_zones_detected": len(calm_zones),
+            "terrain_drag": round(terrain_drag, 3),
+            "confidence_score": provider_meta.get("confidence_score", 0.5),
+            "provider_mix": provider_meta.get("provider_mix", ["open-meteo"]),
         },
     }

@@ -23,6 +23,9 @@ function extractRoads(features) {
       name: f.attributes?.name || 'Road',
       type: f.attributes?.type || 'road',
       width: f.attributes?.width || 6,
+      lanes: f.attributes?.lanes || 1,
+      maxspeed: f.attributes?.maxspeed ?? null,
+      oneway: f.attributes?.oneway || 'no',
       paths: f.geometry?.paths || [],
     }))
 }

@@ -70,6 +70,9 @@ function simplifyFeatureForRegion(feature) {
       height: attrs.height ?? null,
       floors: attrs.floors ?? null,
       width: attrs.width ?? null,
+      lanes: attrs.lanes ?? null,
+      maxspeed: attrs.maxspeed ?? null,
+      oneway: attrs.oneway ?? null,
     },
   }
 }
