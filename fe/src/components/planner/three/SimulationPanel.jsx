@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   simulateTraffic,
   simulateWind,
@@ -40,9 +40,25 @@ function extractBuildings(features) {
     }))
 }
 
+function extractDensityFeatures(features) {
+  if (!Array.isArray(features)) return []
+  return features.map((f) => ({
+    id: f.id,
+    entityType: f.entityType,
+    center: Array.isArray(f.center) ? f.center : null,
+    geometry: f.geometry
+      ? {
+          paths: f.geometry.paths || null,
+          rings: f.geometry.rings || null,
+        }
+      : null,
+  }))
+}
+
 export function SimulationPanel({
   center,
   features,
+  radiusMeters,
   lassoPolygon,
   onTrafficResult,
   onWindResult,
@@ -58,6 +74,14 @@ export function SimulationPanel({
   const [sunDate, setSunDate] = useState('2025-06-21')
   const [sunHour, setSunHour] = useState(12)
   const [results, setResults] = useState({})
+  const resultsRef = useRef({})
+
+  const updateResults = useCallback((type, result) => {
+    const next = { ...resultsRef.current, [type]: result }
+    resultsRef.current = next
+    setResults(next)
+    setSimulationResults?.(next)
+  }, [setSimulationResults])
 
   const run = useCallback(async (type) => {
     if (!center || center.length < 2) {
@@ -108,19 +132,21 @@ export function SimulationPanel({
         onWeatherResult?.(result)
 
       } else if (type === 'density') {
-        result = await fetchDensity(lassoPolygon ? { polygon: lassoPolygon } : null)
+        result = await fetchDensity({
+          polygon: lassoPolygon || null,
+          features: extractDensityFeatures(features),
+          radius_meters: radiusMeters,
+        })
       }
 
-      const next = { ...results, [type]: result }
-      setResults(next)
-      setSimulationResults?.(next)
+      updateResults(type, result)
       setStatus(`${type} simulation complete.`)
     } catch (err) {
       setStatus(`${type} simulation failed: ${err.message}`)
     } finally {
       setRunning(null)
     }
-  }, [center, features, lassoPolygon, timeOfDay, sunDate, sunHour, results, onTrafficResult, onWindResult, onSunResult, onWeatherResult, setStatus, setSimulationResults])
+  }, [center, features, lassoPolygon, timeOfDay, sunDate, sunHour, radiusMeters, onTrafficResult, onWindResult, onSunResult, onWeatherResult, setStatus, updateResults])
 
   const runAll = useCallback(async () => {
     for (const type of ['traffic', 'wind', 'sun', 'weather', 'density']) {
@@ -231,6 +257,7 @@ export function SimulationPanel({
           <button
             onClick={() => {
               onClearOverlays?.()
+              resultsRef.current = {}
               setResults({})
               setSimulationResults?.({})
             }}

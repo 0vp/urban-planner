@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
+from threading import Lock
+from time import perf_counter
 from typing import Any, Optional
 
 import networkx as nx
@@ -28,6 +31,14 @@ TIME_OF_DAY_MULTIPLIER = {
     "default": 1.0,
 }
 
+EXACT_BETWEENNESS_MAX_EDGES = 1400
+APPROX_MIN_K = 32
+APPROX_MAX_K = 96
+CENTRALITY_CACHE_SIZE = 6
+
+_betweenness_cache: OrderedDict[str, dict[tuple[tuple[float, float], tuple[float, float]], float]] = OrderedDict()
+_betweenness_cache_lock = Lock()
+
 
 def _haversine_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     r = 6371000
@@ -36,6 +47,24 @@ def _haversine_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> flo
     dlam = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
     return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _graph_signature_from_roads(roads: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for road in roads:
+        road_id = str(road.get("id", ""))
+        road_type = str(road.get("type", ""))
+        paths = road.get("paths", [])
+        parts.append(f"{road_id}:{road_type}:{len(paths)}")
+        for path in paths:
+            if len(path) < 2:
+                continue
+            first = path[0]
+            last = path[-1]
+            parts.append(
+                f"{len(path)}@{round(first[0], 5)},{round(first[1], 5)}>{round(last[0], 5)},{round(last[1], 5)}"
+            )
+    return "|".join(parts)
 
 
 def _build_road_graph(roads: list[dict[str, Any]]) -> nx.Graph:
@@ -61,22 +90,74 @@ def _build_road_graph(roads: list[dict[str, Any]]) -> nx.Graph:
     return g
 
 
+def _choose_approximation_k(node_count: int) -> int:
+    return max(APPROX_MIN_K, min(APPROX_MAX_K, int(math.sqrt(max(node_count, 1)))))
+
+
+def _compute_edge_betweenness(
+    g: nx.Graph,
+    graph_signature: str,
+) -> tuple[dict[tuple[tuple[float, float], tuple[float, float]], float], str, bool, float]:
+    with _betweenness_cache_lock:
+        cached = _betweenness_cache.get(graph_signature)
+        if cached is not None:
+            _betweenness_cache.move_to_end(graph_signature)
+            return cached, "cache", True, 0.0
+
+    edge_count = g.number_of_edges()
+    node_count = g.number_of_nodes()
+
+    start = perf_counter()
+    method = "exact"
+    try:
+        if edge_count <= EXACT_BETWEENNESS_MAX_EDGES:
+            betweenness = nx.edge_betweenness_centrality(g, weight="distance", normalized=True)
+        else:
+            k = _choose_approximation_k(node_count)
+            method = f"approx_k{k}"
+            betweenness = nx.edge_betweenness_centrality(
+                g,
+                k=k,
+                weight="distance",
+                normalized=True,
+                seed=42,
+            )
+    except Exception:
+        method = "fallback_uniform"
+        betweenness = {e: 0.5 for e in g.edges()}
+
+    runtime_ms = (perf_counter() - start) * 1000
+
+    with _betweenness_cache_lock:
+        _betweenness_cache[graph_signature] = betweenness
+        _betweenness_cache.move_to_end(graph_signature)
+        while len(_betweenness_cache) > CENTRALITY_CACHE_SIZE:
+            _betweenness_cache.popitem(last=False)
+
+    return betweenness, method, False, runtime_ms
+
+
 def simulate_traffic(
     roads: list[dict[str, Any]],
     time_of_day: str = "default",
     polygon: Optional[list[list[float]]] = None,
 ) -> dict[str, Any]:
+    graph_signature = _graph_signature_from_roads(roads)
     g = _build_road_graph(roads)
 
     if g.number_of_edges() == 0:
-        return {"segments": [], "hotspots": [], "summary": {"total_roads": 0, "congested_segments": 0}}
+        return {
+            "segments": [],
+            "hotspots": [],
+            "summary": {
+                "total_roads": 0,
+                "congested_segments": 0,
+                "algorithm": "none",
+            },
+        }
 
     multiplier = TIME_OF_DAY_MULTIPLIER.get(time_of_day, 1.0)
-
-    try:
-        betweenness = nx.edge_betweenness_centrality(g, weight="distance", normalized=True)
-    except Exception:
-        betweenness = {e: 0.5 for e in g.edges()}
+    betweenness, algorithm, cache_hit, centrality_runtime_ms = _compute_edge_betweenness(g, graph_signature)
 
     max_bc = max(betweenness.values()) if betweenness else 1.0
     if max_bc == 0:
@@ -140,5 +221,10 @@ def simulate_traffic(
             "congestion_ratio": round(congested / max(len(segments), 1), 3),
             "time_of_day": time_of_day,
             "avg_vc_ratio": round(sum(s["vc_ratio"] for s in segments) / max(len(segments), 1), 3),
+            "algorithm": algorithm,
+            "cache_hit": cache_hit,
+            "centrality_runtime_ms": round(centrality_runtime_ms, 1),
+            "graph_nodes": g.number_of_nodes(),
+            "graph_edges": g.number_of_edges(),
         },
     }

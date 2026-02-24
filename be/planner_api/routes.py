@@ -32,6 +32,14 @@ OVERPASS_CONNECT_TIMEOUT_SECONDS = 4
 OVERPASS_READ_TIMEOUT_SECONDS = 10
 
 
+async def _read_json_body(request: Request) -> dict:
+    try:
+        payload = await request.json()
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _parse_number(value: str | None) -> float | None:
     if not value:
         return None
@@ -199,11 +207,19 @@ def get_osm_roads(
 
 @router.post("/region")
 async def update_region(request: Request) -> dict:
-    payload = await request.json()
+    payload = await _read_json_body(request)
     location = payload.get("location", "")
     center = payload.get("center", [0, 0])
     radius_meters = payload.get("radiusMeters", 1200)
     features = payload.get("features", [])
+    if not isinstance(center, list) or len(center) < 2:
+        center = [0, 0]
+    if not isinstance(features, list):
+        features = []
+    try:
+        radius_meters = float(radius_meters)
+    except (TypeError, ValueError):
+        radius_meters = 1200
     region_store.update(location, center, radius_meters, features)
     return {"ok": True, "feature_count": len(features)}
 
@@ -215,9 +231,9 @@ def get_region_summary() -> dict:
 
 @router.post("/simulate/traffic")
 async def post_simulate_traffic(request: Request) -> dict:
-    payload = await request.json()
+    payload = await _read_json_body(request)
     roads = payload.get("roads")
-    if not roads:
+    if not isinstance(roads, list) or not roads:
         roads = region_store.get_roads_for_graph()
     time_of_day = payload.get("time_of_day", "default")
     polygon = payload.get("polygon")
@@ -226,23 +242,31 @@ async def post_simulate_traffic(request: Request) -> dict:
 
 @router.post("/simulate/wind")
 async def post_simulate_wind(request: Request) -> dict:
-    payload = await request.json()
+    payload = await _read_json_body(request)
     lat = payload.get("lat")
     lon = payload.get("lon")
+    if isinstance(lat, str):
+        lat = _parse_number(lat)
+    if isinstance(lon, str):
+        lon = _parse_number(lon)
     buildings = payload.get("buildings")
     if lat is None or lon is None:
         center = region_store.center
         lat, lon = center[1], center[0]
-    if not buildings:
+    if not isinstance(buildings, list) or not buildings:
         buildings = region_store.get_buildings_for_simulation()
     return await simulate_wind(lat, lon, buildings)
 
 
 @router.post("/simulate/sun")
 async def post_simulate_sun(request: Request) -> dict:
-    payload = await request.json()
+    payload = await _read_json_body(request)
     lat = payload.get("lat")
     lon = payload.get("lon")
+    if isinstance(lat, str):
+        lat = _parse_number(lat)
+    if isinstance(lon, str):
+        lon = _parse_number(lon)
     if lat is None or lon is None:
         center = region_store.center
         lat, lon = center[1], center[0]
@@ -266,6 +290,12 @@ def get_density() -> dict:
 
 @router.post("/region/density")
 async def post_density_in_area(request: Request) -> dict:
-    payload = await request.json()
+    payload = await _read_json_body(request)
     polygon = payload.get("polygon")
-    return region_store.analyze_density(polygon=polygon)
+    features = payload.get("features")
+    radius_meters = payload.get("radius_meters")
+    return region_store.analyze_density(
+        polygon=polygon,
+        features=features if isinstance(features, list) else None,
+        radius_meters=radius_meters,
+    )

@@ -19,6 +19,10 @@ export function useTrafficViz({ sceneRef, enuFrameRef }) {
 
     clearTraffic()
 
+    if (!Array.isArray(segments) || segments.length === 0) {
+      return { segmentCount: 0 }
+    }
+
     const group = new THREE.Group()
     group.name = 'trafficOverlay'
     groupRef.current = group
@@ -53,6 +57,7 @@ export function useTrafficViz({ sceneRef, enuFrameRef }) {
       })
 
       const line = new THREE.Line(geom, mat)
+      line.frustumCulled = false
       line.renderOrder = 900
       group.add(line)
 
@@ -64,12 +69,14 @@ export function useTrafficViz({ sceneRef, enuFrameRef }) {
         const dotMat = new THREE.MeshBasicMaterial({ color, opacity: 0.8, transparent: true, depthTest: false })
         const dot = new THREE.Mesh(dotGeom, dotMat)
         dot.position.set(midX, midY, zHeight + 5)
+        dot.frustumCulled = false
         dot.renderOrder = 901
         group.add(dot)
       }
     }
 
     scene.add(group)
+    return { segmentCount: segments.length }
   }, [sceneRef, enuFrameRef])
 
   const clearTraffic = useCallback(() => {

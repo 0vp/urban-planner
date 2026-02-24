@@ -116,6 +116,7 @@ export function PlannerSidebar({
           <SimulationPanel
             center={center}
             features={features}
+            radiusMeters={activeRadiusMeters}
             lassoPolygon={lassoPolygon}
             onTrafficResult={onTrafficResult}
             onWindResult={onWindResult}
@@ -225,6 +226,7 @@ export function PlannerSidebar({
             <SimulationPanel
               center={center}
               features={features}
+              radiusMeters={activeRadiusMeters}
               lassoPolygon={lassoPolygon}
               onTrafficResult={onTrafficResult}
               onWindResult={onWindResult}

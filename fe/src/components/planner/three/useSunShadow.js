@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import SunCalc from 'suncalc'
 
 // Scene coordinate system: X=East, Y=North, Z=Up
-export function useSunShadow({ sceneRef, rendererRef, cameraRef, enuFrameRef }) {
+export function useSunShadow({ sceneRef, rendererRef }) {
   const lightRef = useRef(null)
   const shadowPlaneRef = useRef(null)
   const groupRef = useRef(null)
@@ -60,6 +60,7 @@ export function useSunShadow({ sceneRef, rendererRef, cameraRef, enuFrameRef }) 
     const planeMat = new THREE.ShadowMaterial({ opacity: 0.4, color: 0x000033 })
     const plane = new THREE.Mesh(planeGeom, planeMat)
     plane.receiveShadow = true
+    plane.frustumCulled = false
     plane.position.z = 0.1
     plane.renderOrder = 800
     group.add(plane)

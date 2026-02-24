@@ -17,6 +17,86 @@ import { useTrafficViz } from './three/useTrafficViz'
 import { useWindViz } from './three/useWindViz'
 import { useSunShadow } from './three/useSunShadow'
 
+const REGION_SYNC_DEBOUNCE_MS = 1000
+
+function deriveFeatureCenter(feature) {
+  if (Array.isArray(feature?.center) && feature.center.length >= 2) {
+    const lon = Number(feature.center[0])
+    const lat = Number(feature.center[1])
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      return [lon, lat]
+    }
+  }
+
+  const geom = feature?.geometry || {}
+  const source = geom.paths || geom.rings
+  if (!Array.isArray(source) || source.length === 0 || !Array.isArray(source[0]) || source[0].length === 0) {
+    return null
+  }
+
+  let sumLon = 0
+  let sumLat = 0
+  let count = 0
+  for (const p of source[0]) {
+    if (!Array.isArray(p) || p.length < 2) {
+      continue
+    }
+    const lon = Number(p[0])
+    const lat = Number(p[1])
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+      continue
+    }
+    sumLon += lon
+    sumLat += lat
+    count += 1
+  }
+
+  if (count === 0) {
+    return null
+  }
+
+  return [sumLon / count, sumLat / count]
+}
+
+function simplifyFeatureForRegion(feature) {
+  const attrs = feature?.attributes || {}
+  return {
+    id: feature?.id,
+    entityType: feature?.entityType || 'unknown',
+    center: deriveFeatureCenter(feature),
+    attributes: {
+      name: attrs.name || '',
+      type: attrs.type || '',
+      height: attrs.height ?? null,
+      floors: attrs.floors ?? null,
+      width: attrs.width ?? null,
+    },
+  }
+}
+
+function buildRegionSyncPayload({ location, center, radiusMeters, features }) {
+  const simplifiedFeatures = Array.isArray(features)
+    ? features.map(simplifyFeatureForRegion)
+    : []
+
+  const counts = simplifiedFeatures.reduce((acc, feature) => {
+    const key = feature?.entityType || 'unknown'
+    acc[key] = (acc[key] || 0) + 1
+    return acc
+  }, {})
+
+  return {
+    location,
+    center,
+    radiusMeters,
+    features: simplifiedFeatures,
+    summary: {
+      total: simplifiedFeatures.length,
+      counts,
+    },
+  }
+}
+
 export function ThreePlannerShell() {
   const [entityType, setEntityType] = useState('building')
   const [locationInput, setLocationInput] = useState(DEFAULT_LOCATION)
@@ -73,6 +153,8 @@ export function ThreePlannerShell() {
   const basemapAnchorRef = useRef('')
   const animationRef = useRef(0)
   const attrsRequestRef = useRef(0)
+  const regionSyncTimerRef = useRef(0)
+  const regionSyncAbortRef = useRef(null)
 
   const buildingModsRef = useRef(buildingMods)
   buildingModsRef.current = buildingMods
@@ -231,21 +313,40 @@ export function ThreePlannerShell() {
   })
 
   const { showTraffic, clearTraffic } = useTrafficViz({ sceneRef, enuFrameRef })
-  const { showWind, clearWind } = useWindViz({ sceneRef, enuFrameRef, rendererRef })
-  const { showSunShadows, clearSunShadows } = useSunShadow({ sceneRef, rendererRef, cameraRef, enuFrameRef })
+  const { showWind, clearWind } = useWindViz({ sceneRef, enuFrameRef })
+  const { showSunShadows, clearSunShadows } = useSunShadow({ sceneRef, rendererRef })
 
   const handleTrafficResult = useCallback((result) => {
-    if (result?.segments) showTraffic(result.segments)
-  }, [showTraffic])
+    const segments = Array.isArray(result?.segments) ? result.segments : []
+    if (segments.length === 0) {
+      clearTraffic()
+      setStatus('Traffic simulation returned no segments to render.')
+      return
+    }
+    showTraffic(segments)
+    setStatus(`Traffic overlay rendered (${segments.length} segments).`)
+  }, [showTraffic, clearTraffic, setStatus])
 
   const handleWindResult = useCallback((result) => {
-    if (result) showWind(result)
-  }, [showWind])
+    const grid = Array.isArray(result?.grid) ? result.grid : []
+    if (grid.length === 0) {
+      clearWind()
+      setStatus('Wind simulation returned no vectors to animate.')
+      return
+    }
+    showWind(result)
+    setStatus(`Wind overlay rendered (${grid.length} vectors).`)
+  }, [showWind, clearWind, setStatus])
 
   const handleSunResult = useCallback(({ date, hour }) => {
     const vs = mapViewStateRef.current
-    showSunShadows({ date, hour, lat: vs.latitude, lon: vs.longitude })
-  }, [showSunShadows, mapViewStateRef])
+    const sunResult = showSunShadows({ date, hour, lat: vs.latitude, lon: vs.longitude })
+    if (sunResult?.sunAboveHorizon === false) {
+      setStatus('Sun is below horizon for the selected time.')
+      return
+    }
+    setStatus(`Sun shadows rendered (${date} ${String(hour).padStart(2, '0')}:00).`)
+  }, [showSunShadows, mapViewStateRef, setStatus])
 
   const handleClearOverlays = useCallback(() => {
     clearTraffic()
@@ -254,17 +355,62 @@ export function ThreePlannerShell() {
   }, [clearTraffic, clearWind, clearSunShadows])
 
   useEffect(() => {
-    if (features.length > 0 && activeLocation) {
-      const vs = mapViewStateRef.current
-      setCenter([vs.longitude, vs.latitude])
-      postRegionData({
+    if (!activeLocation || features.length === 0) {
+      return () => {}
+    }
+
+    const vs = mapViewStateRef.current
+    const regionCenter = [vs.longitude, vs.latitude]
+    setCenter(regionCenter)
+
+    if (regionSyncTimerRef.current) {
+      clearTimeout(regionSyncTimerRef.current)
+      regionSyncTimerRef.current = 0
+    }
+
+    regionSyncAbortRef.current?.abort()
+    regionSyncAbortRef.current = null
+
+    regionSyncTimerRef.current = window.setTimeout(() => {
+      const controller = new AbortController()
+      regionSyncAbortRef.current = controller
+      const payload = buildRegionSyncPayload({
         location: activeLocation,
-        center: [vs.longitude, vs.latitude],
+        center: regionCenter,
         radiusMeters: activeRadiusMeters,
         features,
-      }).catch(() => {})
+      })
+      postRegionData(payload, {
+        signal: controller.signal,
+        timeoutMs: 20000,
+      }).catch((error) => {
+        if (error?.name === 'AbortError') {
+          return
+        }
+        setStatus(error?.message || 'Failed to sync region context.')
+      })
+    }, REGION_SYNC_DEBOUNCE_MS)
+
+    return () => {
+      if (regionSyncTimerRef.current) {
+        clearTimeout(regionSyncTimerRef.current)
+        regionSyncTimerRef.current = 0
+      }
+      regionSyncAbortRef.current?.abort()
+      regionSyncAbortRef.current = null
     }
-  }, [features, activeLocation, activeRadiusMeters, mapViewStateRef])
+  }, [features, activeLocation, activeRadiusMeters, mapViewStateRef, setStatus])
+
+  useEffect(() => {
+    return () => {
+      if (regionSyncTimerRef.current) {
+        clearTimeout(regionSyncTimerRef.current)
+        regionSyncTimerRef.current = 0
+      }
+      regionSyncAbortRef.current?.abort()
+      regionSyncAbortRef.current = null
+    }
+  }, [])
 
   const handleCreate = useCallback(() => {
     setStatus(`Create ${entityType} is not implemented yet.`)

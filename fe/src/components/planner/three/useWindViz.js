@@ -5,7 +5,7 @@ const PARTICLE_COUNT = 800
 const PARTICLE_LIFE = 3.0
 
 // Scene coordinate system: X=East, Y=North, Z=Up
-export function useWindViz({ sceneRef, enuFrameRef, rendererRef }) {
+export function useWindViz({ sceneRef, enuFrameRef }) {
   const groupRef = useRef(null)
   const animFrameRef = useRef(null)
   const particlesRef = useRef(null)
@@ -22,7 +22,10 @@ export function useWindViz({ sceneRef, enuFrameRef, rendererRef }) {
     group.name = 'windOverlay'
     groupRef.current = group
 
-    const grid = windData.grid || []
+    const grid = Array.isArray(windData?.grid) ? windData.grid : []
+    if (grid.length === 0) {
+      return { particleCount: 0, tunnelCount: 0 }
+    }
     const gridSize = windData.grid_size || 20
     gridDataRef.current = { grid, gridSize, frame }
 
@@ -44,10 +47,17 @@ export function useWindViz({ sceneRef, enuFrameRef, rendererRef }) {
     for (const p of grid) {
       const x = (p.lon - frame.originLon) * metersPerDegLon
       const y = (p.lat - frame.originLat) * metersPerDegLat
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        continue
+      }
       bounds.minX = Math.min(bounds.minX, x)
       bounds.maxX = Math.max(bounds.maxX, x)
       bounds.minY = Math.min(bounds.minY, y)
       bounds.maxY = Math.max(bounds.maxY, y)
+    }
+
+    if (!Number.isFinite(bounds.minX) || !Number.isFinite(bounds.maxX) || !Number.isFinite(bounds.minY) || !Number.isFinite(bounds.maxY)) {
+      return { particleCount: 0, tunnelCount: 0 }
     }
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -80,6 +90,7 @@ export function useWindViz({ sceneRef, enuFrameRef, rendererRef }) {
       sizeAttenuation: true,
     })
     const points = new THREE.Points(geom, mat)
+    points.frustumCulled = false
     points.renderOrder = 950
     group.add(points)
     particlesRef.current = { positions, colors, velocities, lifetimes, geom, bounds, maxSpeed, metersPerDegLon, metersPerDegLat }
@@ -93,12 +104,14 @@ export function useWindViz({ sceneRef, enuFrameRef, rendererRef }) {
       const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4444, opacity: 0.3, transparent: true, side: THREE.DoubleSide, depthTest: false })
       const ring = new THREE.Mesh(ringGeom, ringMat)
       ring.position.set(x, y, 2)  // Z=2 slightly above ground
+      ring.frustumCulled = false
       ring.renderOrder = 940
       group.add(ring)
     }
 
     scene.add(group)
     _startAnimation()
+    return { particleCount: PARTICLE_COUNT, tunnelCount: tunnelZones.length }
   }, [sceneRef, enuFrameRef])
 
   const _startAnimation = useCallback(() => {

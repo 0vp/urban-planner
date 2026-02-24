@@ -108,18 +108,11 @@ class RegionStore:
 
         results = []
         for f in self._features:
-            point = f.get("center")
+            point = self._feature_point(f)
             if not point:
-                attrs = f.get("attributes", {})
-                geom = f.get("geometry", {})
-                paths = geom.get("paths") or geom.get("rings")
-                if paths and isinstance(paths, list) and len(paths) > 0 and len(paths[0]) > 0:
-                    ring = paths[0]
-                    px = sum(p[0] for p in ring) / len(ring)
-                    py = sum(p[1] for p in ring) / len(ring)
-                    point = [px, py]
-                else:
-                    continue
+                continue
+
+            attrs = f.get("attributes", {})
 
             if _point_in_polygon(point, polygon):
                 results.append({
@@ -133,6 +126,25 @@ class RegionStore:
 
     def get_all_features(self) -> list[dict[str, Any]]:
         return self._features
+
+    def _feature_point(self, feature: dict[str, Any]) -> Optional[list[float]]:
+        point = feature.get("center")
+        if isinstance(point, list) and len(point) >= 2:
+            return [point[0], point[1]]
+
+        geom = feature.get("geometry", {})
+        paths = geom.get("paths") or geom.get("rings")
+        if not paths or not isinstance(paths, list) or len(paths) == 0 or not isinstance(paths[0], list) or len(paths[0]) == 0:
+            return None
+
+        ring = paths[0]
+        valid_points = [p for p in ring if isinstance(p, list) and len(p) >= 2]
+        if not valid_points:
+            return None
+
+        px = sum(p[0] for p in valid_points) / len(valid_points)
+        py = sum(p[1] for p in valid_points) / len(valid_points)
+        return [px, py]
 
     def get_roads_for_graph(self) -> list[dict[str, Any]]:
         roads = []
@@ -166,14 +178,29 @@ class RegionStore:
             })
         return buildings
 
-    def analyze_density(self, polygon: Optional[list[list[float]]] = None) -> dict[str, Any]:
-        feats = self.query_features_in_area(polygon) if polygon else [
-            {"id": f.get("id"), "entityType": f.get("entityType"), "name": f.get("attributes", {}).get("name", ""),
-             "type": f.get("attributes", {}).get("type", ""), "center": f.get("center")}
-            for f in self._features
-        ]
+    def analyze_density(
+        self,
+        polygon: Optional[list[list[float]]] = None,
+        features: Optional[list[dict[str, Any]]] = None,
+        radius_meters: Optional[float] = None,
+    ) -> dict[str, Any]:
+        source_features = features if isinstance(features, list) else self._features
 
-        area_km2 = math.pi * (self._radius_meters / 1000) ** 2
+        feats = []
+        for f in source_features:
+            point = self._feature_point(f)
+            if polygon and (not point or not _point_in_polygon(point, polygon)):
+                continue
+            feats.append({
+                "id": f.get("id"),
+                "entityType": f.get("entityType"),
+                "name": f.get("attributes", {}).get("name", ""),
+                "type": f.get("attributes", {}).get("type", ""),
+                "center": point,
+            })
+
+        effective_radius_meters = radius_meters if isinstance(radius_meters, (float, int)) else self._radius_meters
+        area_km2 = math.pi * (float(effective_radius_meters) / 1000) ** 2
         buildings = [f for f in feats if f.get("entityType") == "building"]
         roads = [f for f in feats if f.get("entityType") == "road"]
         parks = [f for f in feats if f.get("entityType") == "park"]
