@@ -92,6 +92,76 @@ export async function fetchFallbackRoads({ center, radiusMeters, signal }) {
   return Array.isArray(data?.features) ? data.features : []
 }
 
+export async function postRegionData(payload, options = {}) {
+  return fetchJson(`${API_BASE_URL}/api/planner/region`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+    timeoutMs: options.timeoutMs ?? 10000,
+    errorPrefix: 'Failed to update region data',
+  })
+}
+
+export async function simulateTraffic(payload = {}, options = {}) {
+  return fetchJson(`${API_BASE_URL}/api/planner/simulate/traffic`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+    timeoutMs: 60000,
+    errorPrefix: 'Traffic simulation failed',
+  })
+}
+
+export async function simulateWind(payload = {}, options = {}) {
+  return fetchJson(`${API_BASE_URL}/api/planner/simulate/wind`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+    timeoutMs: 60000,
+    errorPrefix: 'Wind simulation failed',
+  })
+}
+
+export async function simulateSun(payload = {}, options = {}) {
+  return fetchJson(`${API_BASE_URL}/api/planner/simulate/sun`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+    timeoutMs: 30000,
+    errorPrefix: 'Sun simulation failed',
+  })
+}
+
+export async function fetchWeather(lon, lat, options = {}) {
+  return fetchJson(`${API_BASE_URL}/api/planner/weather?lon=${lon}&lat=${lat}`, {
+    signal: options.signal,
+    timeoutMs: 15000,
+    errorPrefix: 'Weather fetch failed',
+  })
+}
+
+export async function fetchDensity(payload = null, options = {}) {
+  if (payload) {
+    return fetchJson(`${API_BASE_URL}/api/planner/region/density`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: 15000,
+      errorPrefix: 'Density analysis failed',
+    })
+  }
+  return fetchJson(`${API_BASE_URL}/api/planner/region/density`, {
+    signal: options.signal,
+    timeoutMs: 15000,
+    errorPrefix: 'Density analysis failed',
+  })
+}
+
 export function buildAgentWebSocketUrl() {
   const baseUrl = new URL(API_BASE_URL)
   baseUrl.protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'

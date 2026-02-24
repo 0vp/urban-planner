@@ -33,13 +33,24 @@ export function ThreePlannerShellLayout({
   selectedBuildingAttrs,
   status,
   defaultLocation,
+  lassoActive,
+  setLassoActive,
+  lassoPolygon,
+  clearLasso,
+  center,
+  simulationResults,
+  setSimulationResults,
+  onTrafficResult,
+  onWindResult,
+  onSunResult,
+  onClearOverlays,
 }) {
   return (
     <div className="fixed inset-0 bg-[#0D0D0D] text-[#8b8b8b] overflow-hidden pointer-events-none">
       <div
         ref={mountRef}
         className="absolute inset-0 z-0 pointer-events-auto"
-        style={{ cursor: moveMode ? 'default' : 'grab' }}
+        style={{ cursor: lassoActive ? 'crosshair' : moveMode ? 'default' : 'grab' }}
       />
 
       <div className="absolute top-5 left-1/2 -translate-x-1/2 z-40 pointer-events-none flex justify-center w-full px-5">
@@ -110,9 +121,26 @@ export function ThreePlannerShellLayout({
         buildingMods={buildingMods}
         selectedBuildingAttrs={selectedBuildingAttrs}
         status={status}
+        lassoActive={lassoActive}
+        setLassoActive={setLassoActive}
+        lassoPolygon={lassoPolygon}
+        clearLasso={clearLasso}
+        center={center}
+        simulationResults={simulationResults}
+        setSimulationResults={setSimulationResults}
+        onTrafficResult={onTrafficResult}
+        onWindResult={onWindResult}
+        onSunResult={onSunResult}
+        onClearOverlays={onClearOverlays}
       />
 
-      <AgentSidebar setStatus={setStatus} activeLocation={activeLocation} />
+      <AgentSidebar
+        setStatus={setStatus}
+        activeLocation={activeLocation}
+        features={features}
+        lassoPolygon={lassoPolygon}
+        simulationResults={simulationResults}
+      />
     </div>
   )
 }

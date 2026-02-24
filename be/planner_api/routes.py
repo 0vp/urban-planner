@@ -5,7 +5,7 @@ import re
 from urllib import error as url_error
 from urllib import request as url_request
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 try:
     import requests
@@ -13,6 +13,11 @@ except ImportError:  # pragma: no cover - runtime fallback
     requests = None
 
 from planner_api.models import PlannerMapPayload, PlannerMapResponse
+from planner_api.region_store import region_store
+from planner_api.simulations.sun import compute_sun_data
+from planner_api.simulations.traffic import simulate_traffic
+from planner_api.simulations.weather import fetch_weather
+from planner_api.simulations.wind import simulate_wind
 from planner_api.storage import PlannerStorage
 
 
@@ -190,3 +195,77 @@ def get_osm_roads(
     radius_meters: int = Query(1200, ge=300, le=10000),
 ) -> dict[str, list[dict]]:
     return {"features": _query_overpass_roads(lon, lat, radius_meters)}
+
+
+@router.post("/region")
+async def update_region(request: Request) -> dict:
+    payload = await request.json()
+    location = payload.get("location", "")
+    center = payload.get("center", [0, 0])
+    radius_meters = payload.get("radiusMeters", 1200)
+    features = payload.get("features", [])
+    region_store.update(location, center, radius_meters, features)
+    return {"ok": True, "feature_count": len(features)}
+
+
+@router.get("/region/summary")
+def get_region_summary() -> dict:
+    return region_store.get_summary()
+
+
+@router.post("/simulate/traffic")
+async def post_simulate_traffic(request: Request) -> dict:
+    payload = await request.json()
+    roads = payload.get("roads")
+    if not roads:
+        roads = region_store.get_roads_for_graph()
+    time_of_day = payload.get("time_of_day", "default")
+    polygon = payload.get("polygon")
+    return simulate_traffic(roads, time_of_day=time_of_day, polygon=polygon)
+
+
+@router.post("/simulate/wind")
+async def post_simulate_wind(request: Request) -> dict:
+    payload = await request.json()
+    lat = payload.get("lat")
+    lon = payload.get("lon")
+    buildings = payload.get("buildings")
+    if lat is None or lon is None:
+        center = region_store.center
+        lat, lon = center[1], center[0]
+    if not buildings:
+        buildings = region_store.get_buildings_for_simulation()
+    return await simulate_wind(lat, lon, buildings)
+
+
+@router.post("/simulate/sun")
+async def post_simulate_sun(request: Request) -> dict:
+    payload = await request.json()
+    lat = payload.get("lat")
+    lon = payload.get("lon")
+    if lat is None or lon is None:
+        center = region_store.center
+        lat, lon = center[1], center[0]
+    date = payload.get("date", "2025-06-21")
+    hours = payload.get("hours")
+    return compute_sun_data(lat, lon, date=date, hours=hours)
+
+
+@router.get("/weather")
+async def get_weather(
+    lon: float = Query(..., ge=-180, le=180),
+    lat: float = Query(..., ge=-90, le=90),
+) -> dict:
+    return await fetch_weather(lat, lon)
+
+
+@router.get("/region/density")
+def get_density() -> dict:
+    return region_store.analyze_density()
+
+
+@router.post("/region/density")
+async def post_density_in_area(request: Request) -> dict:
+    payload = await request.json()
+    polygon = payload.get("polygon")
+    return region_store.analyze_density(polygon=polygon)

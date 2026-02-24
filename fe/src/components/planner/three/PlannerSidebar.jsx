@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ENTITY_OPTIONS, SELECT_HINT } from './constants'
+import { SimulationPanel } from './SimulationPanel'
 
 export function PlannerSidebar({
   activeLocation,
@@ -21,6 +22,17 @@ export function PlannerSidebar({
   buildingMods,
   selectedBuildingAttrs,
   status,
+  lassoActive,
+  setLassoActive,
+  lassoPolygon,
+  clearLasso,
+  center,
+  simulationResults,
+  setSimulationResults,
+  onTrafficResult,
+  onWindResult,
+  onSunResult,
+  onClearOverlays,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true)
 
@@ -46,6 +58,18 @@ export function PlannerSidebar({
             </button>
             <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-[#2A2A2A] text-[#E0E0E0] text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
               Entity: {ENTITY_OPTIONS.find((option) => option.value === entityType)?.label || entityType}
+            </div>
+          </div>
+
+          <div className="group relative">
+            <button
+              onClick={() => { setLassoActive?.(!lassoActive); if (lassoActive) clearLasso?.() }}
+              className={`p-2 rounded-lg hover:bg-[#2A2A2A] transition-colors ${lassoActive ? 'text-[#ff66aa] bg-[#2A2A2A]' : 'text-[#8b8b8b] hover:text-[#E0E0E0]'}`}
+            >
+              <i className="fa-solid fa-draw-polygon text-lg"></i>
+            </button>
+            <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-[#2A2A2A] text-[#E0E0E0] text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+              {lassoActive ? 'Cancel Lasso' : lassoPolygon ? 'Lasso Active (click to clear)' : 'Lasso Select Area'}
             </div>
           </div>
 
@@ -88,6 +112,18 @@ export function PlannerSidebar({
               Stats ({features.length} features)
             </div>
           </div>
+
+          <SimulationPanel
+            center={center}
+            features={features}
+            lassoPolygon={lassoPolygon}
+            onTrafficResult={onTrafficResult}
+            onWindResult={onWindResult}
+            onSunResult={onSunResult}
+            onClearOverlays={onClearOverlays}
+            setStatus={setStatus}
+            setSimulationResults={setSimulationResults}
+          />
 
           {selectedBuildingAttrs && (
             <div className="group relative">
@@ -150,6 +186,53 @@ export function PlannerSidebar({
                 Delete Selected
               </button>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] mb-1.5">Selection</h2>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => { setLassoActive?.(!lassoActive); if (lassoActive) clearLasso?.() }}
+                className={`h-9 rounded-lg border transition-colors text-sm font-medium ${lassoActive ? 'bg-[#ff66aa]/20 text-[#ff66aa] border-[#ff66aa]/40' : 'bg-[#2A2A2A] text-[#E0E0E0] border-[#333333] hover:bg-[#333333] hover:border-[#444444]'}`}
+              >
+                <i className="fa-solid fa-draw-polygon mr-1.5"></i>
+                {lassoActive ? 'Drawing...' : 'Lasso'}
+              </button>
+              <button
+                type="button"
+                onClick={() => clearLasso?.()}
+                disabled={!lassoPolygon}
+                className="h-9 rounded-lg bg-[#2A2A2A] text-[#E0E0E0] border border-[#333333] hover:bg-[#333333] hover:border-[#444444] disabled:opacity-30 transition-colors text-sm font-medium"
+              >
+                Clear Lasso
+              </button>
+            </div>
+            {lassoPolygon && (
+              <div className="text-[10px] text-[#8b8b8b]">
+                <i className="fa-solid fa-draw-polygon text-[#ff66aa] mr-1"></i>
+                Lasso area selected ({lassoPolygon.length} points)
+              </div>
+            )}
+            {lassoActive && (
+              <div className="text-[10px] text-[#8b8b8b]">
+                Click to add points. Double-click or click near start to close. Esc to cancel.
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <SimulationPanel
+              center={center}
+              features={features}
+              lassoPolygon={lassoPolygon}
+              onTrafficResult={onTrafficResult}
+              onWindResult={onWindResult}
+              onSunResult={onSunResult}
+              onClearOverlays={onClearOverlays}
+              setStatus={setStatus}
+              setSimulationResults={setSimulationResults}
+            />
           </div>
 
           {moveMode && (

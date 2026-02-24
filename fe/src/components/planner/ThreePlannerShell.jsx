@@ -1,16 +1,21 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { buildEnuFrame } from '../../lib/planner/i3sGeometryUtils'
+import { postRegionData } from '../../lib/planner/api'
 import {
   DEFAULT_FETCH_RADIUS_METERS,
   DEFAULT_LOCATION,
   DEFAULT_VIEW_STATE,
 } from './three/constants'
 import { ThreePlannerShellLayout } from './three/ThreePlannerShellLayout'
+import { useLassoTool } from './three/useLassoTool'
 import { usePlannerDataFlow } from './three/usePlannerDataFlow'
 import { usePlannerInteraction } from './three/usePlannerInteraction'
 import { usePlannerScene } from './three/usePlannerScene'
 import { usePlannerTileSystem } from './three/usePlannerTileSystem'
+import { useTrafficViz } from './three/useTrafficViz'
+import { useWindViz } from './three/useWindViz'
+import { useSunShadow } from './three/useSunShadow'
 
 export function ThreePlannerShell() {
   const [entityType, setEntityType] = useState('building')
@@ -32,6 +37,10 @@ export function ThreePlannerShell() {
   const [selectedBuildingAttrs, setSelectedBuildingAttrs] = useState(null)
   const [moveMode, setMoveMode] = useState(false)
   const [moveSrcCoord, setMoveSrcCoord] = useState(null)
+  const [lassoActive, setLassoActive] = useState(false)
+  const [lassoPolygon, setLassoPolygon] = useState(null)
+  const [simulationResults, setSimulationResults] = useState({})
+  const [center, setCenter] = useState(null)
 
   const mountRef = useRef(null)
   const rendererRef = useRef(null)
@@ -209,6 +218,54 @@ export function ThreePlannerShell() {
     moveTransformControlsRef,
   })
 
+  const { clearLasso } = useLassoTool({
+    mountRef,
+    rendererRef,
+    cameraRef,
+    sceneRef,
+    enuFrameRef,
+    mapViewStateRef,
+    lassoActive,
+    setLassoActive,
+    setLassoPolygon,
+  })
+
+  const { showTraffic, clearTraffic } = useTrafficViz({ sceneRef, enuFrameRef })
+  const { showWind, clearWind } = useWindViz({ sceneRef, enuFrameRef, rendererRef })
+  const { showSunShadows, clearSunShadows } = useSunShadow({ sceneRef, rendererRef, cameraRef, enuFrameRef })
+
+  const handleTrafficResult = useCallback((result) => {
+    if (result?.segments) showTraffic(result.segments)
+  }, [showTraffic])
+
+  const handleWindResult = useCallback((result) => {
+    if (result) showWind(result)
+  }, [showWind])
+
+  const handleSunResult = useCallback(({ date, hour }) => {
+    const vs = mapViewStateRef.current
+    showSunShadows({ date, hour, lat: vs.latitude, lon: vs.longitude })
+  }, [showSunShadows, mapViewStateRef])
+
+  const handleClearOverlays = useCallback(() => {
+    clearTraffic()
+    clearWind()
+    clearSunShadows()
+  }, [clearTraffic, clearWind, clearSunShadows])
+
+  useEffect(() => {
+    if (features.length > 0 && activeLocation) {
+      const vs = mapViewStateRef.current
+      setCenter([vs.longitude, vs.latitude])
+      postRegionData({
+        location: activeLocation,
+        center: [vs.longitude, vs.latitude],
+        radiusMeters: activeRadiusMeters,
+        features,
+      }).catch(() => {})
+    }
+  }, [features, activeLocation, activeRadiusMeters, mapViewStateRef])
+
   const handleCreate = useCallback(() => {
     setStatus(`Create ${entityType} is not implemented yet.`)
   }, [entityType])
@@ -250,6 +307,17 @@ export function ThreePlannerShell() {
       selectedBuildingAttrs={selectedBuildingAttrs}
       status={status}
       defaultLocation={DEFAULT_LOCATION}
+      lassoActive={lassoActive}
+      setLassoActive={setLassoActive}
+      lassoPolygon={lassoPolygon}
+      clearLasso={clearLasso}
+      center={center}
+      simulationResults={simulationResults}
+      setSimulationResults={setSimulationResults}
+      onTrafficResult={handleTrafficResult}
+      onWindResult={handleWindResult}
+      onSunResult={handleSunResult}
+      onClearOverlays={handleClearOverlays}
     />
   )
 }

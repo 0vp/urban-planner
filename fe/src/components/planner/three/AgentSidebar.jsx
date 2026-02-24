@@ -4,8 +4,54 @@ import { buildAgentWebSocketUrl } from '../../../lib/planner/api'
 
 const MAX_CHAT_MESSAGES = 40
 
-function buildAgentMemory({ location }) {
-  return JSON.stringify({ location })
+function buildAgentMemory({ location, features, lassoPolygon, simulationResults }) {
+  const memory = { location }
+
+  if (Array.isArray(features) && features.length > 0) {
+    const buildings = features.filter((f) => f.entityType === 'building')
+    const roads = features.filter((f) => f.entityType === 'road')
+    const parks = features.filter((f) => f.entityType === 'park')
+    const rivers = features.filter((f) => f.entityType === 'river')
+
+    memory.regionSummary = {
+      totalFeatures: features.length,
+      buildings: buildings.length,
+      roads: roads.length,
+      parks: parks.length,
+      rivers: rivers.length,
+    }
+
+    const namedBuildings = buildings
+      .filter((b) => b.attributes?.name && b.attributes.name !== 'Building')
+      .slice(0, 20)
+      .map((b) => ({ name: b.attributes.name, type: b.attributes.type, center: b.center }))
+    if (namedBuildings.length > 0) {
+      memory.notableBuildings = namedBuildings
+    }
+
+    const namedRoads = roads
+      .filter((r) => r.attributes?.name && r.attributes.name !== 'Road')
+      .reduce((acc, r) => {
+        if (!acc.some((x) => x.name === r.attributes.name)) {
+          acc.push({ name: r.attributes.name, type: r.attributes.type })
+        }
+        return acc
+      }, [])
+      .slice(0, 20)
+    if (namedRoads.length > 0) {
+      memory.notableRoads = namedRoads
+    }
+  }
+
+  if (Array.isArray(lassoPolygon) && lassoPolygon.length >= 3) {
+    memory.lassoArea = lassoPolygon
+  }
+
+  if (simulationResults && Object.keys(simulationResults).length > 0) {
+    memory.simulationResults = simulationResults
+  }
+
+  return JSON.stringify(memory)
 }
 
 function parseToolEvent(eventLine) {
@@ -198,13 +244,14 @@ function MarkdownText({ text }) {
   )
 }
 
-export function AgentSidebar({ setStatus, activeLocation }) {
+export function AgentSidebar({ setStatus, activeLocation, features, lassoPolygon, simulationResults }) {
   const [isAgentCollapsed, setIsAgentCollapsed] = useState(true)
   const [agentPrompt, setAgentPrompt] = useState('')
   const [agentMessages, setAgentMessages] = useState([])
   const [agentConnection, setAgentConnection] = useState('connecting')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const socketRef = useRef(null)
+  const connectIdRef = useRef(0)
 
   const appendMessage = useCallback((message) => {
     setAgentMessages((prev) => [...prev, message].slice(-MAX_CHAT_MESSAGES))
@@ -229,7 +276,13 @@ export function AgentSidebar({ setStatus, activeLocation }) {
     })
   }, [])
 
-  useEffect(() => {
+  const connectAgent = useCallback(() => {
+    const id = ++connectIdRef.current
+    if (socketRef.current) {
+      socketRef.current.close()
+      socketRef.current = null
+    }
+
     const websocket = new WebSocket(buildAgentWebSocketUrl())
     socketRef.current = websocket
     setAgentConnection('connecting')
@@ -316,7 +369,7 @@ export function AgentSidebar({ setStatus, activeLocation }) {
     })
 
     websocket.addEventListener('close', () => {
-      if (socketRef.current !== websocket) {
+      if (connectIdRef.current !== id) {
         return
       }
       socketRef.current = null
@@ -332,6 +385,14 @@ export function AgentSidebar({ setStatus, activeLocation }) {
       websocket.close()
     }
   }, [appendMessage, setStatus, updateRunMessage])
+
+  useEffect(() => {
+    return connectAgent()
+  }, [connectAgent])
+
+  const handleReconnect = useCallback(() => {
+    connectAgent()
+  }, [connectAgent])
 
   const latestRun = [...agentMessages].reverse().find((message) => message.role === 'run')
   const pinnedTodoItems = latestRun?.todoItems || []
@@ -359,7 +420,19 @@ export function AgentSidebar({ setStatus, activeLocation }) {
               <h2 className="text-[10px] font-semibold uppercase tracking-widest text-[#666666] mb-1">Agent Chat</h2>
               <p className="text-sm font-medium text-[#E0E0E0] leading-snug">Urban Planner</p>
             </div>
-            <span className="text-[11px] uppercase tracking-wide text-[#8b8b8b]">{agentConnection}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-[#8b8b8b]">{agentConnection}</span>
+              {(agentConnection === 'disconnected' || agentConnection === 'error') && (
+                <button
+                  onClick={handleReconnect}
+                  className="h-6 w-6 grid place-items-center rounded-md bg-[#2A2A2A] hover:bg-[#333333] text-[#8b8b8b] hover:text-[#E0E0E0] transition-colors"
+                  title="Reconnect to agent"
+                  aria-label="Reconnect to agent"
+                >
+                  <i className="fa-solid fa-rotate-right text-[10px]"></i>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 rounded-xl border border-[#2A2A2A] bg-[#0D0D0D]/60 p-3 text-xs text-[#8b8b8b] flex flex-col gap-2 overflow-y-auto custom-scrollbar">
@@ -477,6 +550,9 @@ export function AgentSidebar({ setStatus, activeLocation }) {
                       prompt,
                       memory: buildAgentMemory({
                         location: activeLocation,
+                        features,
+                        lassoPolygon,
+                        simulationResults,
                       }),
                     }),
                   )
