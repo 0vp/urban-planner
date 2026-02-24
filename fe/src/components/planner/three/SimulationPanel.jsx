@@ -32,15 +32,54 @@ function extractRoads(features) {
 
 function extractBuildings(features) {
   if (!Array.isArray(features)) return []
+
+  const simplifyRing = (ring) => {
+    if (!Array.isArray(ring) || ring.length < 3) return null
+    if (ring.length <= 28) return ring
+    const step = Math.ceil(ring.length / 28)
+    const simplified = ring.filter((_, idx) => idx % step === 0)
+    if (simplified.length >= 3) return simplified
+    return ring.slice(0, 28)
+  }
+
+  const centerFor = (feature) => {
+    if (Array.isArray(feature?.center) && feature.center.length >= 2) {
+      return [feature.center[0], feature.center[1]]
+    }
+    const ring = feature?.geometry?.rings?.[0]
+    if (!Array.isArray(ring) || ring.length === 0) return [0, 0]
+    let sumLon = 0
+    let sumLat = 0
+    let count = 0
+    for (const p of ring) {
+      if (!Array.isArray(p) || p.length < 2) continue
+      const lon = Number(p[0])
+      const lat = Number(p[1])
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
+      sumLon += lon
+      sumLat += lat
+      count += 1
+    }
+    if (count === 0) return [0, 0]
+    return [sumLon / count, sumLat / count]
+  }
+
   return features
     .filter((f) => f.entityType === 'building')
-    .map((f) => ({
-      id: f.id,
-      name: f.attributes?.name || 'Building',
-      center: f.center || [0, 0],
-      height: f.attributes?.height || 10,
-      floors: f.attributes?.floors || 3,
-    }))
+    .map((f) => {
+      const ring = simplifyRing(f.geometry?.rings?.[0])
+      return {
+        id: f.id,
+        name: f.attributes?.name || 'Building',
+        center: centerFor(f),
+        height: f.attributes?.height || 10,
+        floors: f.attributes?.floors || 3,
+        width: f.attributes?.width ?? null,
+        geometry: {
+          rings: ring ? [ring] : null,
+        },
+      }
+    })
 }
 
 function extractDensityFeatures(features) {
@@ -66,6 +105,7 @@ export function SimulationPanel({
   onTrafficResult,
   onWindResult,
   onSunResult,
+  onDensityResult,
   onWeatherResult,
   onClearOverlays,
   setStatus,
@@ -117,6 +157,8 @@ export function SimulationPanel({
           lat: center[1],
           lon: center[0],
           buildings,
+          radius_meters: radiusMeters,
+          grid_size: Math.max(24, Math.min(40, Math.round(radiusMeters / 55))),
         })
         onWindResult?.(result)
 
@@ -140,16 +182,32 @@ export function SimulationPanel({
           features: extractDensityFeatures(features),
           radius_meters: radiusMeters,
         })
+        onDensityResult?.({
+          center,
+          radiusMeters,
+          features: extractDensityFeatures(features),
+          density: result,
+        })
       }
 
       updateResults(type, result)
-      setStatus(`${type} simulation complete.`)
+      if (type === 'weather') {
+        setStatus('weather simulation complete.')
+      } else if (type === 'traffic' && !onTrafficResult) {
+        setStatus('traffic simulation complete.')
+      } else if (type === 'wind' && !onWindResult) {
+        setStatus('wind simulation complete.')
+      } else if (type === 'sun' && !onSunResult) {
+        setStatus('sun simulation complete.')
+      } else if (type === 'density' && !onDensityResult) {
+        setStatus('density simulation complete.')
+      }
     } catch (err) {
       setStatus(`${type} simulation failed: ${err.message}`)
     } finally {
       setRunning(null)
     }
-  }, [center, features, lassoPolygon, timeOfDay, sunDate, sunHour, radiusMeters, onTrafficResult, onWindResult, onSunResult, onWeatherResult, setStatus, updateResults])
+  }, [center, features, lassoPolygon, timeOfDay, sunDate, sunHour, radiusMeters, onTrafficResult, onWindResult, onSunResult, onDensityResult, onWeatherResult, setStatus, updateResults])
 
   const runAll = useCallback(async () => {
     for (const type of ['traffic', 'wind', 'sun', 'weather', 'density']) {

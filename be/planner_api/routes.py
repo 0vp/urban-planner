@@ -302,10 +302,29 @@ async def post_simulate_wind(request: Request) -> dict:
     buildings = payload.get("buildings")
     if not isinstance(buildings, list) or not buildings:
         buildings = region_store.get_buildings_for_simulation()
+    grid_size = payload.get("grid_size", 24)
+    if not isinstance(grid_size, int):
+        try:
+            grid_size = int(grid_size)
+        except (TypeError, ValueError):
+            grid_size = 24
+    radius_meters = payload.get("radius_meters", 1200)
+    if not isinstance(radius_meters, (int, float)):
+        try:
+            radius_meters = float(radius_meters)
+        except (TypeError, ValueError):
+            radius_meters = 1200.0
     weather_context = payload.get("weather_context")
     if not isinstance(weather_context, dict):
         weather_context = await _weather_context_for(lat, lon)
-    return await simulate_wind(lat, lon, buildings, weather_context=weather_context)
+    return await simulate_wind(
+        lat,
+        lon,
+        buildings,
+        grid_size=grid_size,
+        radius_meters=float(radius_meters),
+        weather_context=weather_context,
+    )
 
 
 @router.post("/simulate/sun")

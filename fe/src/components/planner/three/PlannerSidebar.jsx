@@ -32,6 +32,7 @@ export function PlannerSidebar({
   onTrafficResult,
   onWindResult,
   onSunResult,
+  onDensityResult,
   onClearOverlays,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true)
@@ -121,6 +122,7 @@ export function PlannerSidebar({
             onTrafficResult={onTrafficResult}
             onWindResult={onWindResult}
             onSunResult={onSunResult}
+            onDensityResult={onDensityResult}
             onClearOverlays={onClearOverlays}
             setStatus={setStatus}
             setSimulationResults={setSimulationResults}
@@ -231,6 +233,7 @@ export function PlannerSidebar({
               onTrafficResult={onTrafficResult}
               onWindResult={onWindResult}
               onSunResult={onSunResult}
+              onDensityResult={onDensityResult}
               onClearOverlays={onClearOverlays}
               setStatus={setStatus}
               setSimulationResults={setSimulationResults}

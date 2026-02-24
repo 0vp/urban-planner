@@ -13,6 +13,7 @@ import { usePlannerDataFlow } from './three/usePlannerDataFlow'
 import { usePlannerInteraction } from './three/usePlannerInteraction'
 import { usePlannerScene } from './three/usePlannerScene'
 import { usePlannerTileSystem } from './three/usePlannerTileSystem'
+import { useDensityViz } from './three/useDensityViz'
 import { useTrafficViz } from './three/useTrafficViz'
 import { useWindViz } from './three/useWindViz'
 import { useSunShadow } from './three/useSunShadow'
@@ -317,6 +318,7 @@ export function ThreePlannerShell() {
 
   const { showTraffic, clearTraffic } = useTrafficViz({ sceneRef, enuFrameRef })
   const { showWind, clearWind } = useWindViz({ sceneRef, enuFrameRef })
+  const { showDensity, clearDensity } = useDensityViz({ basemapGroupRef, enuFrameRef })
   const { showSunShadows, clearSunShadows } = useSunShadow({ sceneRef, rendererRef })
 
   const handleTrafficResult = useCallback((result) => {
@@ -334,12 +336,22 @@ export function ThreePlannerShell() {
     const grid = Array.isArray(result?.grid) ? result.grid : []
     if (grid.length === 0) {
       clearWind()
-      setStatus('Wind simulation returned no vectors to animate.')
+      setStatus('Wind simulation returned no flow field to render.')
       return
     }
-    showWind(result)
-    setStatus(`Wind overlay rendered (${grid.length} vectors).`)
+    const info = showWind(result)
+    setStatus(`Wind streamlines rendered (${info?.streamlineCount || 0} lines).`)
   }, [showWind, clearWind, setStatus])
+
+  const handleDensityResult = useCallback((payload) => {
+    const info = showDensity(payload)
+    if (!info?.cellCount) {
+      clearDensity()
+      setStatus('Density simulation returned no heatmap cells to render.')
+      return
+    }
+    setStatus(`Density heatmap rendered (${info.cellCount} cells).`)
+  }, [showDensity, clearDensity, setStatus])
 
   const handleSunResult = useCallback(({ date, hour }) => {
     const vs = mapViewStateRef.current
@@ -354,8 +366,9 @@ export function ThreePlannerShell() {
   const handleClearOverlays = useCallback(() => {
     clearTraffic()
     clearWind()
+    clearDensity()
     clearSunShadows()
-  }, [clearTraffic, clearWind, clearSunShadows])
+  }, [clearTraffic, clearWind, clearDensity, clearSunShadows])
 
   useEffect(() => {
     if (!activeLocation || features.length === 0) {
@@ -466,6 +479,7 @@ export function ThreePlannerShell() {
       onTrafficResult={handleTrafficResult}
       onWindResult={handleWindResult}
       onSunResult={handleSunResult}
+      onDensityResult={handleDensityResult}
       onClearOverlays={handleClearOverlays}
     />
   )

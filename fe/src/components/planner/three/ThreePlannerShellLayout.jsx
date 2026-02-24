@@ -43,6 +43,7 @@ export function ThreePlannerShellLayout({
   onTrafficResult,
   onWindResult,
   onSunResult,
+  onDensityResult,
   onClearOverlays,
 }) {
   return (
@@ -131,6 +132,7 @@ export function ThreePlannerShellLayout({
         onTrafficResult={onTrafficResult}
         onWindResult={onWindResult}
         onSunResult={onSunResult}
+        onDensityResult={onDensityResult}
         onClearOverlays={onClearOverlays}
       />
 

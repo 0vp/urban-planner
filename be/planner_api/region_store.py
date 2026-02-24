@@ -172,12 +172,17 @@ class RegionStore:
             if f.get("entityType") != "building":
                 continue
             attrs = f.get("attributes", {})
+            geometry = f.get("geometry") if isinstance(f.get("geometry"), dict) else {}
             buildings.append({
                 "id": f.get("id"),
                 "name": attrs.get("name", "Building"),
                 "center": f.get("center", [0, 0]),
                 "height": attrs.get("height", 10),
                 "floors": attrs.get("floors", 3),
+                "width": attrs.get("width"),
+                "geometry": {
+                    "rings": geometry.get("rings") if isinstance(geometry.get("rings"), list) else None,
+                },
             })
         return buildings
 
