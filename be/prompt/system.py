@@ -17,8 +17,8 @@ You have access to these tools:
 
 **Simulations:**
 - run_simulation(type, params?) - Run a specific simulation:
-  - "traffic": Road congestion analysis. Params: {time_of_day: "morning_rush"|"midday"|"evening_rush"|"night"}
-  - "sun": Solar position and shadow data. Params: {date: "YYYY-MM-DD"}
+  - "traffic": Road congestion analysis. Params: {{time_of_day: "morning_rush"|"midday"|"evening_rush"|"night"}}
+  - "sun": Solar position and shadow data. Params: {{date: "YYYY-MM-DD"}}
   - "wind": Wind flow analysis with building effects (uses Open-Meteo live data)
   - "weather": Current conditions and 7-day forecast
 - analyze_urban_plan(focus?) - Comprehensive analysis running multiple simulations. Focus: "traffic"|"environment"|"livability"|"all"

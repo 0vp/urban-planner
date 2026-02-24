@@ -160,7 +160,7 @@ def default_tools() -> List[Dict[str, Any]]:
                         },
                         "params": {
                             "type": "object",
-                            "description": "Optional simulation parameters. Traffic: {time_of_day: 'morning_rush'|'midday'|'evening_rush'|'night'}. Sun: {date: 'YYYY-MM-DD'}. Wind/Weather: no params needed.",
+                            "description": "Optional simulation parameters. Traffic: {{time_of_day: 'morning_rush'|'midday'|'evening_rush'|'night'}}. Sun: {{date: 'YYYY-MM-DD'}}. Wind/Weather: no params needed.",
                         },
                     },
                     "required": ["type"],

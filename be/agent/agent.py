@@ -47,13 +47,11 @@ class WBAgent:
 
         if self.assistant_id:
             self.assistant = await self.client.get_assistant(self.assistant_id)
-            existing_tools = getattr(self.assistant, "tools", None) or []
-            if not existing_tools:
-                self.assistant = await self.client.update_assistant(
-                    self.assistant_id,
-                    description=desired_description,
-                    tools=desired_tools,
-                )
+            self.assistant = await self.client.update_assistant(
+                self.assistant_id,
+                description=desired_description,
+                tools=desired_tools,
+            )
             return self.assistant
 
         self.assistant = await self.client.create_assistant(
